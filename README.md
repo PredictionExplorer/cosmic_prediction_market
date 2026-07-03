@@ -8,6 +8,11 @@ Arbitrum One.
 The whole market is one dependency-free contract:
 [`src/GestureMarket.sol`](src/GestureMarket.sol) (~150 lines of logic).
 
+A polished web app for the market lives in [`frontend/`](frontend/README.md)
+(Next.js + wagmi, deployable to Vercel): live prediction gauge and chart,
+one-click bets with exact client-side quotes, position what-if explorer,
+resolution and claiming.
+
 ## How it works
 
 Instead of a yes/no question like "will there be more than 800 bids?", the market
@@ -125,6 +130,11 @@ forge script script/Deploy.s.sol \
 
 Pick `MIN_COUNT`/`MAX_COUNT` generously around your expectation; final counts
 outside the range simply pay out as if they landed on the nearest bound.
+
+For frontend development there is also a local sandbox
+([`script/DeployLocal.s.sol`](script/DeployLocal.s.sol)) that deploys a mock
+game + mock CST + market on anvil; see
+[`frontend/README.md`](frontend/README.md).
 
 ## Design notes and trade-offs
 

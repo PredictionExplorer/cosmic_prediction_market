@@ -1,0 +1,128 @@
+"use client";
+
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect } from "react";
+import { toast } from "sonner";
+import { Wallet, X } from "lucide-react";
+import type { Connector } from "wagmi";
+import { useConnect, useConnectors } from "wagmi";
+import { describeTxError } from "@/lib/errors";
+
+interface WalletModalProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+/**
+ * Wallet picker over wagmi's EIP-6963 discovery: every injected wallet the
+ * browser exposes (MetaMask, Rabby, Coinbase…) appears automatically, plus
+ * WalletConnect when configured.
+ */
+export function WalletModal({ open, onClose }: WalletModalProps) {
+  const connectors = useConnectors();
+  const connect = useConnect();
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, onClose]);
+
+  const pick = async (connector: Connector) => {
+    try {
+      await connect.mutateAsync({ connector });
+      onClose();
+    } catch (error) {
+      toast.error(describeTxError(error));
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-space/80 backdrop-blur-sm p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Connect a wallet"
+        >
+          <motion.div
+            className="w-full max-w-sm rounded-2xl border border-line bg-surface p-5 shadow-[0_24px_80px_rgba(2,0,16,0.8)]"
+            initial={{ opacity: 0, scale: 0.95, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.97, y: 8 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="font-display text-lg font-semibold">Connect a wallet</h2>
+              <button
+                onClick={onClose}
+                aria-label="Close"
+                className="rounded-lg p-1.5 text-ink-dim transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            {connectors.length === 0 ? (
+              <div className="rounded-xl border border-line bg-surface-2/60 p-4 text-sm text-ink-dim">
+                <p className="mb-2 flex items-center gap-2 font-medium text-ink">
+                  <Wallet className="size-4" aria-hidden /> No wallet found
+                </p>
+                <p>
+                  Install a browser wallet like{" "}
+                  <a
+                    className="text-nova-bright underline-offset-2 hover:underline"
+                    href="https://metamask.io"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    MetaMask
+                  </a>{" "}
+                  or{" "}
+                  <a
+                    className="text-nova-bright underline-offset-2 hover:underline"
+                    href="https://rabby.io"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Rabby
+                  </a>
+                  , then reload this page.
+                </p>
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {connectors.map((connector) => (
+                  <li key={connector.uid}>
+                    <button
+                      onClick={() => void pick(connector)}
+                      disabled={connect.isPending}
+                      className="flex w-full items-center gap-3 rounded-xl border border-line bg-surface-2/50 px-4 py-3 text-left text-sm font-medium transition-all hover:border-nova/50 hover:bg-surface-2 disabled:opacity-50"
+                    >
+                      {connector.icon ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- wallet icons are data: URIs from EIP-6963
+                        <img src={connector.icon} alt="" className="size-7 rounded-md" />
+                      ) : (
+                        <span className="flex size-7 items-center justify-center rounded-md bg-nova/15">
+                          <Wallet className="size-4 text-nova-bright" aria-hidden />
+                        </span>
+                      )}
+                      {connector.name}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}

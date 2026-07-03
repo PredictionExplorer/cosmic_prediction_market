@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+@theme {
+  /* Cosmic palette */
+  --color-space: #07060e;
+  --color-space-2: #0c0a18;
+  --color-surface: #12101f;
+  --color-surface-2: #181529;
+  --color-line: rgba(167, 155, 220, 0.14);
+  --color-line-strong: rgba(167, 155, 220, 0.28);
+
+  --color-ink: #f0edfa;
+  --color-ink-dim: #a49bc4;
+  --color-ink-faint: #6f6790;
+
+  --color-nova: #8b7bff; /* brand violet */
+  --color-nova-bright: #a89bff;
+
+  --color-higher: #34e3a5; /* aurora green */
+  --color-higher-dim: #1a9e70;
+  --color-lower: #ff6584; /* nebula rose */
+  --color-lower-dim: #c24560;
+
+  --color-ended: #ffc355; /* amber for "awaiting resolution" */
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-geist-sans), sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --shadow-glow-higher: 0 0 40px -8px rgba(52, 227, 165, 0.45);
+  --shadow-glow-lower: 0 0 40px -8px rgba(255, 101, 132, 0.45);
+  --shadow-glow-nova: 0 0 48px -10px rgba(139, 123, 255, 0.5);
+
+  --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+  --animate-drift: drift 90s linear infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  @keyframes drift {
+    from {
+      transform: translate3d(0, 0, 0);
+    }
+    to {
+      transform: translate3d(-600px, -400px, 0);
+    }
+  }
+
+  @keyframes shimmer {
+    from {
+      background-position: -200% 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-space);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Nebula glow wash */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -2;
+  background:
+    radial-gradient(52rem 36rem at 12% -8%, rgba(139, 123, 255, 0.16), transparent 60%),
+    radial-gradient(44rem 30rem at 88% 4%, rgba(52, 227, 165, 0.07), transparent 60%),
+    radial-gradient(50rem 40rem at 55% 115%, rgba(255, 101, 132, 0.07), transparent 62%),
+    linear-gradient(180deg, var(--color-space-2), var(--color-space) 32rem);
+}
+
+/* Starfield: three parallax dot layers built from gradients */
+.starfield {
+  position: fixed;
+  inset: -700px;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1.4px 1.4px at 8% 12%, rgba(240, 237, 250, 0.85) 49%, transparent 51%),
+    radial-gradient(1.1px 1.1px at 22% 74%, rgba(240, 237, 250, 0.5) 49%, transparent 51%),
+    radial-gradient(1.7px 1.7px at 33% 32%, rgba(168, 155, 255, 0.75) 49%, transparent 51%),
+    radial-gradient(1px 1px at 44% 89%, rgba(240, 237, 250, 0.45) 49%, transparent 51%),
+    radial-gradient(1.3px 1.3px at 56% 21%, rgba(240, 237, 250, 0.7) 49%, transparent 51%),
+    radial-gradient(1px 1px at 64% 58%, rgba(52, 227, 165, 0.55) 49%, transparent 51%),
+    radial-gradient(1.6px 1.6px at 76% 40%, rgba(240, 237, 250, 0.8) 49%, transparent 51%),
+    radial-gradient(1px 1px at 85% 82%, rgba(240, 237, 250, 0.4) 49%, transparent 51%),
+    radial-gradient(1.2px 1.2px at 93% 15%, rgba(255, 101, 132, 0.5) 49%, transparent 51%),
+    radial-gradient(1px 1px at 15% 48%, rgba(240, 237, 250, 0.35) 49%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 70% 5%, rgba(240, 237, 250, 0.65) 49%, transparent 51%),
+    radial-gradient(1px 1px at 40% 62%, rgba(168, 155, 255, 0.4) 49%, transparent 51%);
+  background-size: 520px 520px;
+  animation: var(--animate-drift);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .starfield {
+    animation: none;
+  }
+}
+
+::selection {
+  background: rgba(139, 123, 255, 0.4);
+}
+
+/* Thin styled scrollbars for feeds */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(167, 155, 220, 0.25) transparent;
+}
+
+/* Number inputs without spinners */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Range slider (what-if explorer) */
+input[type="range"].cosmic-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, var(--color-lower) 0%, #b98bd9 50%, var(--color-higher) 100%);
+  outline: none;
+}
+input[type="range"].cosmic-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: var(--color-ink);
+  border: 3px solid var(--color-nova);
+  box-shadow: 0 0 12px rgba(139, 123, 255, 0.8);
+  cursor: pointer;
+}
+input[type="range"].cosmic-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: var(--color-ink);
+  border: 3px solid var(--color-nova);
+  box-shadow: 0 0 12px rgba(139, 123, 255, 0.8);
+  cursor: pointer;
+}
+
+.text-glow-higher {
+  text-shadow: 0 0 24px rgba(52, 227, 165, 0.5);
+}
+.text-glow-lower {
+  text-shadow: 0 0 24px rgba(255, 101, 132, 0.5);
+}
+.text-glow-nova {
+  text-shadow: 0 0 28px rgba(139, 123, 255, 0.55);
+}
+
+.skeleton {
+  background: linear-gradient(
+    100deg,
+    rgba(167, 155, 220, 0.08) 40%,
+    rgba(167, 155, 220, 0.18) 50%,
+    rgba(167, 155, 220, 0.08) 60%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
