@@ -1,0 +1,27 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# Everyday runs: quick but meaningful fuzzing.
+[profile.default.fuzz]
+runs = 1000
+
+[profile.default.invariant]
+runs = 64
+depth = 64
+# Handler calls are fully bounded; ANY revert is a bug and must fail the run.
+fail_on_revert = true
+
+# Long-running campaign: FOUNDRY_PROFILE=heavy forge test
+# Crank `runs` further for overnight fuzzing sessions.
+[profile.heavy.fuzz]
+runs = 50000
+max_test_rejects = 1000000
+
+[profile.heavy.invariant]
+runs = 512
+depth = 256
+fail_on_revert = true
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
