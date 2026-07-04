@@ -5,6 +5,14 @@ libs = ["lib"]
 # GenerateVectors.s.sol writes the frontend's differential test fixtures.
 fs_permissions = [{ access = "read-write", path = "frontend/src/test/fixtures" }]
 
+# Production compiler settings. Kept in the DEFAULT profile on purpose: tests,
+# CI and deployments must all exercise the exact bytecode that ships.
+solc = "0.8.35"             # pinned for reproducible, verifiable builds
+optimizer = true
+optimizer_runs = 1_000_000  # deploy-once singleton, far under the size limit: favor runtime gas
+via_ir = true               # Yul IR pipeline: whole-contract optimization
+evm_version = "osaka"       # supported on Arbitrum One since ArbOS 51 "Dia" (Jan 2026)
+
 # Everyday runs: quick but meaningful fuzzing.
 [profile.default.fuzz]
 runs = 1000

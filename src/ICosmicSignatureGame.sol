@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.35;
 
 /// @notice Minimal read-only view of the CosmicSignatureGame contract
 /// (proxy 0x6a714Ae7B5b6eA520F6BCA23d2E609C4Fd5863F2 on Arbitrum One).

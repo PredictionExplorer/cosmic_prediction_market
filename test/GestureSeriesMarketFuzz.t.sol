@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.35;
 
 import {GestureSeriesMarket} from "../src/GestureSeriesMarket.sol";
 import {ICosmicSignatureGame} from "../src/ICosmicSignatureGame.sol";

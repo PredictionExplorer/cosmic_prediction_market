@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.35;
 
 /// @notice Minimal well-behaved ERC20 standing in for CST. Functions are virtual
 /// so adversarial variants below can override them.

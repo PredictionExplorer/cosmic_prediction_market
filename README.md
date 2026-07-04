@@ -217,11 +217,17 @@ crank the `heavy` numbers up arbitrarily for overnight runs.
 
 ## Deployment
 
-Deploy the singleton **once**; every future round runs on it automatically:
+Deploy the singleton **once**; every future round runs on it automatically.
+The deployer key lives in an encrypted Foundry keystore — never in a file or
+shell variable:
 
 ```bash
+# one-time: import the deployer key into an encrypted keystore
+cast wallet import pm-deployer --interactive
+
 forge script script/Deploy.s.sol \
-  --rpc-url $ARBITRUM_RPC_URL --private-key $PRIVATE_KEY --broadcast
+  --rpc-url $ARBITRUM_RPC_URL --account pm-deployer --broadcast \
+  --verify --etherscan-api-key $ETHERSCAN_API_KEY
 ```
 
 No pre-funding, no parameters, no admin — liquidity arrives permissionlessly
