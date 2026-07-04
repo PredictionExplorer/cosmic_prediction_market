@@ -10,11 +10,6 @@ export const gestureSeriesMarketAbi = [
         "name": "game_",
         "type": "address",
         "internalType": "contract ICosmicSignatureGame"
-      },
-      {
-        "name": "feeTiers_",
-        "type": "uint16[]",
-        "internalType": "uint16[]"
       }
     ],
     "stateMutability": "nonpayable"
@@ -29,14 +24,14 @@ export const gestureSeriesMarketAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "cstIn",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "declaredFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
       },
       {
         "name": "initialYesProbBps",
@@ -102,11 +97,6 @@ export const gestureSeriesMarketAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "cstIn",
         "type": "uint256",
         "internalType": "uint256"
@@ -123,45 +113,6 @@ export const gestureSeriesMarketAbi = [
       }
     ],
     "outputs": [
-      {
-        "name": "tokensOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "betNoBest",
-    "inputs": [
-      {
-        "name": "roundId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cstIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minTokensOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
       {
         "name": "tokensOut",
         "type": "uint256",
@@ -180,11 +131,6 @@ export const gestureSeriesMarketAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "cstIn",
         "type": "uint256",
         "internalType": "uint256"
@@ -201,45 +147,6 @@ export const gestureSeriesMarketAbi = [
       }
     ],
     "outputs": [
-      {
-        "name": "tokensOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "betYesBest",
-    "inputs": [
-      {
-        "name": "roundId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cstIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minTokensOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
       {
         "name": "tokensOut",
         "type": "uint256",
@@ -275,11 +182,6 @@ export const gestureSeriesMarketAbi = [
         "name": "roundId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
       }
     ],
     "outputs": [
@@ -306,13 +208,19 @@ export const gestureSeriesMarketAbi = [
   },
   {
     "type": "function",
-    "name": "feeTiers",
-    "inputs": [],
+    "name": "currentFeeBps",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
-        "type": "uint16[]",
-        "internalType": "uint16[]"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -340,11 +248,6 @@ export const gestureSeriesMarketAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "user",
         "type": "address",
         "internalType": "address"
@@ -360,6 +263,11 @@ export const gestureSeriesMarketAbi = [
         "name": "pendingFees",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "declaredFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -390,11 +298,6 @@ export const gestureSeriesMarketAbi = [
         "name": "roundId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
       }
     ],
     "outputs": [
@@ -422,6 +325,16 @@ export const gestureSeriesMarketAbi = [
         "name": "feeReserve",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "feeWeight",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeBps",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -436,11 +349,6 @@ export const gestureSeriesMarketAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "cstIn",
         "type": "uint256",
         "internalType": "uint256"
@@ -449,35 +357,6 @@ export const gestureSeriesMarketAbi = [
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "quoteBetNoBest",
-    "inputs": [
-      {
-        "name": "roundId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cstIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "tokensOut",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -494,11 +373,6 @@ export const gestureSeriesMarketAbi = [
         "internalType": "uint256"
       },
       {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
         "name": "cstIn",
         "type": "uint256",
         "internalType": "uint256"
@@ -507,35 +381,6 @@ export const gestureSeriesMarketAbi = [
     "outputs": [
       {
         "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "quoteBetYesBest",
-    "inputs": [
-      {
-        "name": "roundId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "cstIn",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "tokensOut",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -568,11 +413,6 @@ export const gestureSeriesMarketAbi = [
         "name": "roundId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "internalType": "uint16"
       },
       {
         "name": "shares",
@@ -677,6 +517,24 @@ export const gestureSeriesMarketAbi = [
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "updateFeeDeclaration",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newFeeBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "Bet",
     "inputs": [
@@ -691,12 +549,6 @@ export const gestureSeriesMarketAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
       },
       {
         "name": "yes",
@@ -752,6 +604,37 @@ export const gestureSeriesMarketAbi = [
   },
   {
     "type": "event",
+    "name": "FeeDeclarationUpdated",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "provider",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "oldFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "newFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FeesClaimed",
     "inputs": [
       {
@@ -765,12 +648,6 @@ export const gestureSeriesMarketAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
       },
       {
         "name": "amount",
@@ -798,16 +675,16 @@ export const gestureSeriesMarketAbi = [
         "internalType": "address"
       },
       {
-        "name": "feeBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
         "name": "cstIn",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "declaredFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       },
       {
         "name": "sharesOut",
@@ -845,12 +722,6 @@ export const gestureSeriesMarketAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
       },
       {
         "name": "sharesIn",
@@ -991,11 +862,6 @@ export const gestureSeriesMarketAbi = [
   {
     "type": "error",
     "name": "InsufficientShares",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidFeeTier",
     "inputs": []
   },
   {

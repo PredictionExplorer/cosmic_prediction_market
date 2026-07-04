@@ -29,17 +29,24 @@ interface IERC20 {
 ///   construction. YES pays 1 CST iff the round's final count is STRICTLY
 ///   greater than the threshold (a tie means NO wins); NO pays 1 CST otherwise.
 ///
-/// - Liquidity lives in Uniswap-style constant-product pools (x * y = k)
-///   between YES and NO — one pool per fee tier, so LPs choose the fee they
-///   are willing to accept (like Uniswap v3 fee tiers). Anyone can provide
-///   liquidity and earns that tier's fee on every bet, pro rata by LP shares.
-///   The marginal price of YES in a pool, reserveNo / (reserveYes + reserveNo),
-///   is that pool's implied probability.
+/// - Each round has ONE Uniswap-style constant-product pool (x * y = k)
+///   between YES and NO. The marginal price of YES,
+///   reserveNo / (reserveYes + reserveNo), is the market's implied probability.
+///
+/// - The trading fee is a LIQUIDITY-WEIGHTED VOTE. Every LP declares the fee
+///   they want when depositing (and can re-declare anytime); the pool charges
+///   the share-weighted average of all declarations:
+///
+///       currentFeeBps = sum(shares_i * declaredFee_i) / totalShares
+///
+///   Declarations set what bettors pay; fee EARNINGS are split pro rata by
+///   shares regardless of what each LP declared. Your declaration is a vote,
+///   not a private price — LPs who dislike the average can re-vote or leave
+///   at any moment.
 ///
 /// - `betYes(...)` mints sets with your CST and swaps the NO half into the
-///   pool, leaving you holding only YES (mirror image for `betNo`). The
-///   `bet...Best` variants route to whichever tier gives the best execution.
-///   To exit early, buy the opposite side and `redeemSets`.
+///   pool, leaving you holding only YES (mirror image for `betNo`). To exit
+///   early, buy the opposite side and `redeemSets`.
 ///
 /// - The gesture count is public and only ever increases, so the instant it
 ///   exceeds the threshold the outcome is decided: betting and adding
@@ -53,8 +60,9 @@ interface IERC20 {
 /// Hardening notes (see the test suite for the attacks these defeat):
 ///
 /// - Every trade and liquidity change takes explicit slippage bounds and a
-///   deadline, so liquidity pulls, sandwiches and stale transactions cannot
-///   worsen your execution beyond what you signed.
+///   deadline. Liquidity pulls, sandwiches, stale transactions AND sudden
+///   fee-vote jumps all fail the same way: execution below your signed floor
+///   reverts.
 /// - First-deposit share inflation is blocked by a minimum initial deposit,
 ///   permanently locked dead shares, and rounding that always favors the pool.
 /// - Reserves and balances are internal accounting: direct CST donations to
@@ -65,16 +73,15 @@ interface IERC20 {
 contract GestureSeriesMarket {
     uint256 internal constant ONE = 1e18;
     uint256 internal constant BPS = 10_000;
-    /// @dev Hard cap on any fee tier: 10%.
+    /// @dev Hard cap on any fee declaration (and thus on the average): 10%.
     uint256 internal constant MAX_FEE_BPS = 1_000;
-    /// @dev At most this many fee tiers (bounds all tier loops).
-    uint256 internal constant MAX_TIERS = 5;
     /// @dev A pool's first deposit must be at least this much CST. Together
     /// with `DEAD_SHARES` this makes classic share-inflation attacks
     /// unprofitable by many orders of magnitude.
     uint256 internal constant MIN_INITIAL_LIQUIDITY = 1e15;
     /// @dev Shares permanently locked (credited to address(0)) on a pool's
-    /// first deposit, Uniswap v2 style.
+    /// first deposit, Uniswap v2 style. They carry the opener's fee
+    /// declaration forever (wei-scale weight, economically inert).
     uint256 internal constant DEAD_SHARES = 1e3;
     /// @dev The first LP seeds the pool at their chosen YES probability,
     /// clamped to [1%, 99%] so both reserves are meaningfully nonzero.
@@ -83,9 +90,6 @@ contract GestureSeriesMarket {
 
     ICosmicSignatureGame public immutable game;
     IERC20 public immutable cst;
-
-    /// @dev Allowed fee tiers in strictly ascending order, fixed at deployment.
-    uint16[] internal _feeTiers;
 
     struct Pool {
         uint256 reserveYes;
@@ -96,8 +100,13 @@ contract GestureSeriesMarket {
         /// @dev CST held for this pool's LPs' unclaimed fees. Kept explicit so
         /// solvency is provable: contract balance >= sets outstanding + fee reserves.
         uint256 feeReserve;
+        /// @dev The fee-vote ledger: sum over all holders of
+        /// `shares * declaredFeeBps`. The pool's fee is `feeWeight / totalShares`.
+        uint256 feeWeight;
         mapping(address => uint256) sharesOf;
         mapping(address => uint256) feeDebtOf;
+        /// @dev Each LP's current fee declaration (uniform across their shares).
+        mapping(address => uint16) feeDeclarationOf;
     }
 
     struct RoundMarket {
@@ -107,7 +116,7 @@ contract GestureSeriesMarket {
         /// @dev Final gesture count of the previous round; YES wins iff this
         /// round's final count is strictly greater.
         uint256 threshold;
-        mapping(uint16 => Pool) pools;
+        Pool pool;
         mapping(address => uint256) yesBalance;
         mapping(address => uint256) noBalance;
     }
@@ -119,20 +128,12 @@ contract GestureSeriesMarket {
     event RoundInitialized(uint256 indexed roundId, uint256 threshold);
     event SetsMinted(uint256 indexed roundId, address indexed user, uint256 amount);
     event SetsRedeemed(uint256 indexed roundId, address indexed user, uint256 amount);
-    event Bet(
-        uint256 indexed roundId,
-        address indexed user,
-        uint16 feeBps,
-        bool yes,
-        uint256 cstIn,
-        uint256 netIn,
-        uint256 tokensOut
-    );
+    event Bet(uint256 indexed roundId, address indexed user, bool yes, uint256 cstIn, uint256 netIn, uint256 tokensOut);
     event LiquidityAdded(
         uint256 indexed roundId,
         address indexed provider,
-        uint16 feeBps,
         uint256 cstIn,
+        uint16 declaredFeeBps,
         uint256 sharesOut,
         uint256 yesToPool,
         uint256 noToPool
@@ -140,18 +141,17 @@ contract GestureSeriesMarket {
     event LiquidityRemoved(
         uint256 indexed roundId,
         address indexed provider,
-        uint16 feeBps,
         uint256 sharesIn,
         uint256 yesOut,
         uint256 noOut,
         uint256 feesOut
     );
-    event FeesClaimed(uint256 indexed roundId, address indexed user, uint16 feeBps, uint256 amount);
+    event FeeDeclarationUpdated(uint256 indexed roundId, address indexed provider, uint16 oldFeeBps, uint16 newFeeBps);
+    event FeesClaimed(uint256 indexed roundId, address indexed user, uint256 amount);
     event Resolved(uint256 indexed roundId, uint256 finalCount, bool yesWon);
     event Claimed(uint256 indexed roundId, address indexed user, uint256 cstOut);
 
     error InvalidParams();
-    error InvalidFeeTier();
     error RoundNotInitialized();
     error RoundNotActive();
     error OutcomeDecided();
@@ -173,18 +173,8 @@ contract GestureSeriesMarket {
     }
 
     /// @param game_ The CosmicSignatureGame proxy; CST is read from it.
-    /// @param feeTiers_ Allowed fee tiers in basis points, strictly ascending,
-    /// each in (0, 1000]. E.g. [100, 200, 500] for 1% / 2% / 5%.
-    constructor(ICosmicSignatureGame game_, uint16[] memory feeTiers_) {
+    constructor(ICosmicSignatureGame game_) {
         if (address(game_) == address(0)) revert InvalidParams();
-        uint256 n = feeTiers_.length;
-        if (n == 0 || n > MAX_TIERS) revert InvalidParams();
-        for (uint256 i = 0; i < n; i++) {
-            uint16 tier = feeTiers_[i];
-            if (tier == 0 || tier > MAX_FEE_BPS) revert InvalidParams();
-            if (i > 0 && tier <= feeTiers_[i - 1]) revert InvalidParams();
-            _feeTiers.push(tier);
-        }
         game = game_;
         address token = game_.token();
         if (token == address(0)) revert InvalidParams();
@@ -195,25 +185,28 @@ contract GestureSeriesMarket {
     // Liquidity
     // ---------------------------------------------------------------------
 
-    /// @notice Provide `cstIn` CST of liquidity to the (`roundId`, `feeBps`)
-    /// pool and receive LP shares. The first deposit for the current round
-    /// initializes the round's market (reading the threshold from the game),
-    /// and the first deposit into a pool opens it at `initialYesProbBps`
-    /// (ignored afterwards; later deposits join at the pool's current ratio,
-    /// with any excess outcome tokens credited back to your balances).
+    /// @notice Provide `cstIn` CST of liquidity to round `roundId`'s pool and
+    /// receive LP shares. `declaredFeeBps` is your fee vote (0–1000 bps): the
+    /// pool charges the share-weighted average of all LPs' declarations, and
+    /// this call re-declares YOUR ENTIRE position at `declaredFeeBps`.
+    ///
+    /// The first deposit for the current round initializes the round's market
+    /// (reading the threshold from the game), and the first deposit into the
+    /// pool opens it at `initialYesProbBps` (ignored afterwards; later
+    /// deposits join at the pool's current ratio, with any excess outcome
+    /// tokens credited back to your balances).
     /// @param minSharesOut Slippage guard on the LP shares received.
     /// @param deadline Unix timestamp after which the transaction reverts.
     function addLiquidity(
         uint256 roundId,
-        uint16 feeBps,
         uint256 cstIn,
+        uint16 declaredFeeBps,
         uint256 initialYesProbBps,
         uint256 minSharesOut,
         uint256 deadline
     ) external nonReentrant returns (uint256 sharesOut) {
         _checkDeadline(deadline);
-        _checkTier(feeBps);
-        if (cstIn == 0) revert InvalidParams();
+        if (cstIn == 0 || declaredFeeBps > MAX_FEE_BPS) revert InvalidParams();
 
         RoundMarket storage rm = _rounds[roundId];
         if (!rm.initialized) {
@@ -227,32 +220,29 @@ contract GestureSeriesMarket {
         if (game.bidderAddresses(roundId) > rm.threshold) revert OutcomeDecided();
 
         _pullCst(msg.sender, cstIn);
-        Pool storage p = rm.pools[feeBps];
+        Pool storage p = rm.pool;
 
         if (p.totalShares == 0) {
-            sharesOut = _openPool(rm, p, roundId, feeBps, cstIn, initialYesProbBps);
+            sharesOut = _openPool(rm, p, roundId, cstIn, declaredFeeBps, initialYesProbBps);
         } else {
-            sharesOut = _joinPool(rm, p, roundId, feeBps, cstIn);
+            sharesOut = _joinPool(rm, p, roundId, cstIn, declaredFeeBps);
         }
         if (sharesOut < minSharesOut) revert Slippage();
     }
 
-    /// @notice Burn `shares` LP shares of the (`roundId`, `feeBps`) pool for a
+    /// @notice Burn `shares` LP shares of round `roundId`'s pool for a
     /// pro-rata cut of its reserves (credited to your YES/NO balances) plus
     /// all your accrued fees (paid in CST). Works at ANY time — while the
     /// round is live, once the outcome is decided, and after resolution — so
-    /// liquidity can never be trapped.
-    function removeLiquidity(
-        uint256 roundId,
-        uint16 feeBps,
-        uint256 shares,
-        uint256 minYesOut,
-        uint256 minNoOut,
-        uint256 deadline
-    ) external nonReentrant returns (uint256 yesOut, uint256 noOut, uint256 feesOut) {
+    /// liquidity can never be trapped. Removed shares stop voting on the fee.
+    function removeLiquidity(uint256 roundId, uint256 shares, uint256 minYesOut, uint256 minNoOut, uint256 deadline)
+        external
+        nonReentrant
+        returns (uint256 yesOut, uint256 noOut, uint256 feesOut)
+    {
         _checkDeadline(deadline);
         RoundMarket storage rm = _rounds[roundId];
-        Pool storage p = rm.pools[feeBps];
+        Pool storage p = rm.pool;
         uint256 userShares = p.sharesOf[msg.sender];
         if (shares == 0 || shares > userShares) revert InsufficientShares();
 
@@ -265,6 +255,7 @@ contract GestureSeriesMarket {
         p.reserveNo -= noOut;
         p.sharesOf[msg.sender] = userShares - shares;
         p.totalShares -= shares;
+        p.feeWeight -= shares * uint256(p.feeDeclarationOf[msg.sender]);
         p.feeDebtOf[msg.sender] = (userShares - shares) * p.accFeePerShare / ONE;
         rm.yesBalance[msg.sender] += yesOut;
         rm.noBalance[msg.sender] += noOut;
@@ -272,20 +263,33 @@ contract GestureSeriesMarket {
             p.feeReserve -= feesOut;
             _pushCst(msg.sender, feesOut);
         }
-        emit LiquidityRemoved(roundId, msg.sender, feeBps, shares, yesOut, noOut, feesOut);
+        emit LiquidityRemoved(roundId, msg.sender, shares, yesOut, noOut, feesOut);
     }
 
-    /// @notice Pay out your accrued (so far unclaimed) fees from the
-    /// (`roundId`, `feeBps`) pool without touching your shares. Works anytime.
-    function claimFees(uint256 roundId, uint16 feeBps) external nonReentrant returns (uint256 feesOut) {
-        Pool storage p = _rounds[roundId].pools[feeBps];
+    /// @notice Re-cast your fee vote for round `roundId` without moving funds:
+    /// your entire share position switches to `newFeeBps`. Works anytime.
+    function updateFeeDeclaration(uint256 roundId, uint16 newFeeBps) external nonReentrant {
+        if (newFeeBps > MAX_FEE_BPS) revert InvalidParams();
+        Pool storage p = _rounds[roundId].pool;
+        uint256 shares = p.sharesOf[msg.sender];
+        if (shares == 0) revert InsufficientShares();
+        uint16 oldFeeBps = p.feeDeclarationOf[msg.sender];
+        p.feeWeight = p.feeWeight - shares * uint256(oldFeeBps) + shares * uint256(newFeeBps);
+        p.feeDeclarationOf[msg.sender] = newFeeBps;
+        emit FeeDeclarationUpdated(roundId, msg.sender, oldFeeBps, newFeeBps);
+    }
+
+    /// @notice Pay out your accrued (so far unclaimed) fees from round
+    /// `roundId`'s pool without touching your shares. Works anytime.
+    function claimFees(uint256 roundId) external nonReentrant returns (uint256 feesOut) {
+        Pool storage p = _rounds[roundId].pool;
         feesOut = _pendingFees(p, msg.sender);
         p.feeDebtOf[msg.sender] = p.sharesOf[msg.sender] * p.accFeePerShare / ONE;
         if (feesOut > 0) {
             p.feeReserve -= feesOut;
             _pushCst(msg.sender, feesOut);
         }
-        emit FeesClaimed(roundId, msg.sender, feeBps, feesOut);
+        emit FeesClaimed(roundId, msg.sender, feesOut);
     }
 
     // ---------------------------------------------------------------------
@@ -327,56 +331,32 @@ contract GestureSeriesMarket {
     // Betting
     // ---------------------------------------------------------------------
 
-    /// @notice Bet `cstIn` CST on YES ("this round beats the last one") in the
-    /// (`roundId`, `feeBps`) pool. You receive YES tokens.
-    /// @param minTokensOut Slippage guard; reverts if the bet would yield fewer
-    /// tokens (also your protection against liquidity being pulled first).
-    function betYes(uint256 roundId, uint16 feeBps, uint256 cstIn, uint256 minTokensOut, uint256 deadline)
+    /// @notice Bet `cstIn` CST on YES ("this round beats the last one"). You
+    /// receive YES tokens. The fee charged is the pool's current
+    /// share-weighted average (`currentFeeBps`).
+    /// @param minTokensOut Slippage guard; reverts if the bet would yield
+    /// fewer tokens (your protection against liquidity pulls, sandwiches AND
+    /// fee-vote jumps alike).
+    function betYes(uint256 roundId, uint256 cstIn, uint256 minTokensOut, uint256 deadline)
         external
         nonReentrant
         returns (uint256 tokensOut)
     {
         _checkDeadline(deadline);
         RoundMarket storage rm = _tradableRound(roundId);
-        tokensOut = _bet(rm, roundId, feeBps, true, cstIn, minTokensOut);
+        tokensOut = _bet(rm, roundId, true, cstIn, minTokensOut);
     }
 
-    /// @notice Bet `cstIn` CST on NO ("it won't beat the last round") in the
-    /// (`roundId`, `feeBps`) pool. You receive NO tokens.
-    function betNo(uint256 roundId, uint16 feeBps, uint256 cstIn, uint256 minTokensOut, uint256 deadline)
+    /// @notice Bet `cstIn` CST on NO ("it won't beat the last round"). You
+    /// receive NO tokens.
+    function betNo(uint256 roundId, uint256 cstIn, uint256 minTokensOut, uint256 deadline)
         external
         nonReentrant
         returns (uint256 tokensOut)
     {
         _checkDeadline(deadline);
         RoundMarket storage rm = _tradableRound(roundId);
-        tokensOut = _bet(rm, roundId, feeBps, false, cstIn, minTokensOut);
-    }
-
-    /// @notice Bet on YES via whichever fee tier currently gives the most
-    /// tokens for `cstIn` (all-in, i.e. net of each tier's fee).
-    function betYesBest(uint256 roundId, uint256 cstIn, uint256 minTokensOut, uint256 deadline)
-        external
-        nonReentrant
-        returns (uint16 feeBps, uint256 tokensOut)
-    {
-        _checkDeadline(deadline);
-        RoundMarket storage rm = _tradableRound(roundId);
-        feeBps = _bestTier(rm, true, cstIn);
-        tokensOut = _bet(rm, roundId, feeBps, true, cstIn, minTokensOut);
-    }
-
-    /// @notice Bet on NO via whichever fee tier currently gives the most
-    /// tokens for `cstIn`.
-    function betNoBest(uint256 roundId, uint256 cstIn, uint256 minTokensOut, uint256 deadline)
-        external
-        nonReentrant
-        returns (uint16 feeBps, uint256 tokensOut)
-    {
-        _checkDeadline(deadline);
-        RoundMarket storage rm = _tradableRound(roundId);
-        feeBps = _bestTier(rm, false, cstIn);
-        tokensOut = _bet(rm, roundId, feeBps, false, cstIn, minTokensOut);
+        tokensOut = _bet(rm, roundId, false, cstIn, minTokensOut);
     }
 
     // ---------------------------------------------------------------------
@@ -422,11 +402,6 @@ contract GestureSeriesMarket {
     // Views
     // ---------------------------------------------------------------------
 
-    /// @notice The fixed, contract-wide fee tiers in basis points (ascending).
-    function feeTiers() external view returns (uint16[] memory) {
-        return _feeTiers;
-    }
-
     /// @notice Full lifecycle state of a round's market in one call.
     function roundState(uint256 roundId)
         external
@@ -451,14 +426,28 @@ contract GestureSeriesMarket {
         outcomeDecided = initialized && currentCount > threshold;
     }
 
-    /// @notice Reserves and share/fee accounting of one pool.
-    function pool(uint256 roundId, uint16 feeBps)
+    /// @notice Reserves, share/fee accounting, and the live fee of a round's pool.
+    function pool(uint256 roundId)
         external
         view
-        returns (uint256 reserveYes, uint256 reserveNo, uint256 totalShares, uint256 accFeePerShare, uint256 feeReserve)
+        returns (
+            uint256 reserveYes,
+            uint256 reserveNo,
+            uint256 totalShares,
+            uint256 accFeePerShare,
+            uint256 feeReserve,
+            uint256 feeWeight,
+            uint256 feeBps
+        )
     {
-        Pool storage p = _rounds[roundId].pools[feeBps];
-        return (p.reserveYes, p.reserveNo, p.totalShares, p.accFeePerShare, p.feeReserve);
+        Pool storage p = _rounds[roundId].pool;
+        return (p.reserveYes, p.reserveNo, p.totalShares, p.accFeePerShare, p.feeReserve, p.feeWeight, _poolFeeBps(p));
+    }
+
+    /// @notice The fee a bet pays right now: the share-weighted average of
+    /// all LP declarations (0 while the pool is unopened).
+    function currentFeeBps(uint256 roundId) external view returns (uint256) {
+        return _poolFeeBps(_rounds[roundId].pool);
     }
 
     /// @notice A user's outcome-token balances for a round.
@@ -467,36 +456,26 @@ contract GestureSeriesMarket {
         return (rm.yesBalance[user], rm.noBalance[user]);
     }
 
-    /// @notice A user's LP position in one pool: shares plus fees claimable now.
-    function lpPositionOf(uint256 roundId, uint16 feeBps, address user)
+    /// @notice A user's LP position: shares, fees claimable now, and their
+    /// current fee declaration (vote).
+    function lpPositionOf(uint256 roundId, address user)
         external
         view
-        returns (uint256 shares, uint256 pendingFees)
+        returns (uint256 shares, uint256 pendingFees, uint16 declaredFeeBps)
     {
-        Pool storage p = _rounds[roundId].pools[feeBps];
-        return (p.sharesOf[user], _pendingFees(p, user));
+        Pool storage p = _rounds[roundId].pool;
+        return (p.sharesOf[user], _pendingFees(p, user), p.feeDeclarationOf[user]);
     }
 
-    /// @notice YES tokens a `betYes(roundId, feeBps, cstIn, ...)` would return
-    /// right now (0 if the pool has no liquidity).
-    function quoteBetYes(uint256 roundId, uint16 feeBps, uint256 cstIn) external view returns (uint256) {
-        return _quote(_rounds[roundId].pools[feeBps], true, feeBps, cstIn);
+    /// @notice YES tokens a `betYes(roundId, cstIn, ...)` would return right
+    /// now at the current weighted fee (0 if the pool has no liquidity).
+    function quoteBetYes(uint256 roundId, uint256 cstIn) external view returns (uint256) {
+        return _quote(_rounds[roundId].pool, true, cstIn);
     }
 
-    /// @notice NO tokens a `betNo(roundId, feeBps, cstIn, ...)` would return right now.
-    function quoteBetNo(uint256 roundId, uint16 feeBps, uint256 cstIn) external view returns (uint256) {
-        return _quote(_rounds[roundId].pools[feeBps], false, feeBps, cstIn);
-    }
-
-    /// @notice The tier `betYesBest` would route to and its quote
-    /// (0, 0 when no pool has liquidity).
-    function quoteBetYesBest(uint256 roundId, uint256 cstIn) external view returns (uint16 feeBps, uint256 tokensOut) {
-        return _bestQuote(_rounds[roundId], true, cstIn);
-    }
-
-    /// @notice The tier `betNoBest` would route to and its quote.
-    function quoteBetNoBest(uint256 roundId, uint256 cstIn) external view returns (uint16 feeBps, uint256 tokensOut) {
-        return _bestQuote(_rounds[roundId], false, cstIn);
+    /// @notice NO tokens a `betNo(roundId, cstIn, ...)` would return right now.
+    function quoteBetNo(uint256 roundId, uint256 cstIn) external view returns (uint256) {
+        return _quote(_rounds[roundId].pool, false, cstIn);
     }
 
     // ---------------------------------------------------------------------
@@ -513,15 +492,16 @@ contract GestureSeriesMarket {
         emit RoundInitialized(roundId, rm.threshold);
     }
 
-    /// @dev First deposit into a pool: seeds reserves at the LP's chosen YES
+    /// @dev First deposit into the pool: seeds reserves at the LP's chosen YES
     /// probability using all `cstIn` minted sets — the surplus side stays with
-    /// the LP as outcome tokens. Locks `DEAD_SHARES` forever (inflation guard).
+    /// the LP as outcome tokens. Locks `DEAD_SHARES` forever (inflation
+    /// guard); the dead shares carry the opener's fee declaration.
     function _openPool(
         RoundMarket storage rm,
         Pool storage p,
         uint256 roundId,
-        uint16 feeBps,
         uint256 cstIn,
+        uint16 declaredFeeBps,
         uint256 initialYesProbBps
     ) internal returns (uint256 sharesOut) {
         if (cstIn < MIN_INITIAL_LIQUIDITY) revert InsufficientLiquidity();
@@ -547,14 +527,18 @@ contract GestureSeriesMarket {
         sharesOut = cstIn - DEAD_SHARES;
         p.sharesOf[msg.sender] = sharesOut;
         p.totalShares = cstIn;
-        emit LiquidityAdded(roundId, msg.sender, feeBps, cstIn, sharesOut, rY, rN);
+        p.feeWeight = cstIn * uint256(declaredFeeBps);
+        p.feeDeclarationOf[msg.sender] = declaredFeeBps;
+        p.feeDeclarationOf[address(0)] = declaredFeeBps;
+        emit LiquidityAdded(roundId, msg.sender, cstIn, declaredFeeBps, sharesOut, rY, rN);
     }
 
     /// @dev Subsequent deposit: joins at the pool's current ratio. Deposits
     /// round UP (against the joiner) and shares round DOWN, so joining can
     /// never extract value from existing LPs. Excess outcome tokens are
-    /// credited back. Also settles the joiner's accrued fees.
-    function _joinPool(RoundMarket storage rm, Pool storage p, uint256 roundId, uint16 feeBps, uint256 cstIn)
+    /// credited back, accrued fees are settled, and the joiner's ENTIRE
+    /// position is re-declared at `declaredFeeBps`.
+    function _joinPool(RoundMarket storage rm, Pool storage p, uint256 roundId, uint256 cstIn, uint16 declaredFeeBps)
         internal
         returns (uint256 sharesOut)
     {
@@ -570,32 +554,39 @@ contract GestureSeriesMarket {
         uint256 dN = _ceilDiv(cstIn * rN, m);
 
         uint256 pending = _pendingFees(p, msg.sender);
+        uint256 oldShares = p.sharesOf[msg.sender];
+        uint256 newShares = oldShares + sharesOut;
+
         p.reserveYes = rY + dY;
         p.reserveNo = rN + dN;
         rm.yesBalance[msg.sender] += cstIn - dY;
         rm.noBalance[msg.sender] += cstIn - dN;
         p.totalShares += sharesOut;
-        p.sharesOf[msg.sender] += sharesOut;
-        p.feeDebtOf[msg.sender] = p.sharesOf[msg.sender] * p.accFeePerShare / ONE;
+        p.sharesOf[msg.sender] = newShares;
+        // Re-cast the fee vote for the whole position at the new declaration.
+        p.feeWeight =
+            p.feeWeight - oldShares * uint256(p.feeDeclarationOf[msg.sender]) + newShares * uint256(declaredFeeBps);
+        p.feeDeclarationOf[msg.sender] = declaredFeeBps;
+        p.feeDebtOf[msg.sender] = newShares * p.accFeePerShare / ONE;
         if (pending > 0) {
             p.feeReserve -= pending;
             _pushCst(msg.sender, pending);
         }
-        emit LiquidityAdded(roundId, msg.sender, feeBps, cstIn, sharesOut, dY, dN);
+        emit LiquidityAdded(roundId, msg.sender, cstIn, declaredFeeBps, sharesOut, dY, dN);
     }
 
-    /// @dev Common bet body: pull CST, credit the pool's LPs their fee, mint
-    /// sets with the rest and swap the unwanted side into the pool.
-    function _bet(RoundMarket storage rm, uint256 roundId, uint16 feeBps, bool yes, uint256 cstIn, uint256 minTokensOut)
+    /// @dev Common bet body: pull CST, credit the pool's LPs the weighted-
+    /// average fee, mint sets with the rest and swap the unwanted side in.
+    function _bet(RoundMarket storage rm, uint256 roundId, bool yes, uint256 cstIn, uint256 minTokensOut)
         internal
         returns (uint256 tokensOut)
     {
         if (cstIn == 0) revert InvalidParams();
-        Pool storage p = rm.pools[feeBps];
+        Pool storage p = rm.pool;
         if (p.totalShares == 0 || p.reserveYes == 0 || p.reserveNo == 0) revert InsufficientLiquidity();
 
         _pullCst(msg.sender, cstIn);
-        uint256 fee = cstIn * uint256(feeBps) / BPS;
+        uint256 fee = cstIn * _poolFeeBps(p) / BPS;
         uint256 net = cstIn - fee;
         p.feeReserve += fee;
         p.accFeePerShare += fee * ONE / p.totalShares;
@@ -613,7 +604,7 @@ contract GestureSeriesMarket {
             p.reserveYes += net;
             rm.noBalance[msg.sender] += tokensOut;
         }
-        emit Bet(roundId, msg.sender, feeBps, yes, cstIn, net, tokensOut);
+        emit Bet(roundId, msg.sender, yes, cstIn, net, tokensOut);
     }
 
     /// @dev The round must be initialized, unresolved, still the game's
@@ -629,42 +620,18 @@ contract GestureSeriesMarket {
         if (game.bidderAddresses(roundId) > rm.threshold) revert OutcomeDecided();
     }
 
-    /// @dev Tier with the highest all-in output for this bet; ties go to the
-    /// lowest fee. Reverts if no pool can take the trade.
-    function _bestTier(RoundMarket storage rm, bool yes, uint256 cstIn) internal view returns (uint16 best) {
-        uint256 bestOut = 0;
-        uint256 n = _feeTiers.length;
-        for (uint256 i = 0; i < n; i++) {
-            uint16 tier = _feeTiers[i];
-            uint256 out = _quote(rm.pools[tier], yes, tier, cstIn);
-            if (out > bestOut) {
-                bestOut = out;
-                best = tier;
-            }
-        }
-        if (bestOut == 0) revert InsufficientLiquidity();
+    /// @dev The share-weighted average fee; 0 for an unopened pool. Bounded
+    /// by MAX_FEE_BPS since every declaration is.
+    function _poolFeeBps(Pool storage p) internal view returns (uint256) {
+        uint256 total = p.totalShares;
+        if (total == 0) return 0;
+        return p.feeWeight / total;
     }
 
-    function _bestQuote(RoundMarket storage rm, bool yes, uint256 cstIn)
-        internal
-        view
-        returns (uint16 feeBps, uint256 tokensOut)
-    {
-        uint256 n = _feeTiers.length;
-        for (uint256 i = 0; i < n; i++) {
-            uint16 tier = _feeTiers[i];
-            uint256 out = _quote(rm.pools[tier], yes, tier, cstIn);
-            if (out > tokensOut) {
-                tokensOut = out;
-                feeBps = tier;
-            }
-        }
-    }
-
-    /// @dev Quote for one pool; 0 when the pool can't take the trade.
-    function _quote(Pool storage p, bool yes, uint16 feeBps, uint256 cstIn) internal view returns (uint256) {
+    /// @dev Quote at the current weighted fee; 0 when the pool can't trade.
+    function _quote(Pool storage p, bool yes, uint256 cstIn) internal view returns (uint256) {
         if (cstIn == 0 || p.totalShares == 0 || p.reserveYes == 0 || p.reserveNo == 0) return 0;
-        uint256 net = cstIn - cstIn * uint256(feeBps) / BPS;
+        uint256 net = cstIn - cstIn * _poolFeeBps(p) / BPS;
         return yes ? _buyAmount(p.reserveYes, p.reserveNo, net) : _buyAmount(p.reserveNo, p.reserveYes, net);
     }
 
@@ -683,14 +650,6 @@ contract GestureSeriesMarket {
     function _checkDeadline(uint256 deadline) internal view {
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp > deadline) revert DeadlineExpired();
-    }
-
-    function _checkTier(uint16 feeBps) internal view {
-        uint256 n = _feeTiers.length;
-        for (uint256 i = 0; i < n; i++) {
-            if (_feeTiers[i] == feeBps) return;
-        }
-        revert InvalidFeeTier();
     }
 
     function _ceilDiv(uint256 a, uint256 b) internal pure returns (uint256) {

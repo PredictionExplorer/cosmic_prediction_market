@@ -1,6 +1,6 @@
 import type { Address } from "viem";
-import type { PoolState, TierPool } from "./math";
-import { aggregateProbabilityFloat, claimValue, positionValueAtProbability } from "./math";
+import type { PoolState } from "./math";
+import { claimValue, currentFeeBps, poolIsTradable, positionValueAtProbability, probabilityFloat } from "./math";
 
 /**
  * Lifecycle of one round's market:
@@ -30,17 +30,10 @@ export interface RoundSnapshot {
   readonly currentCount: bigint;
   /** The game's current round counter. */
   readonly gameRoundNum: bigint;
-  /** One pool per fee tier, ascending by fee. */
-  readonly pools: readonly TierPool[];
+  /** The round's single pool. */
+  readonly pool: PoolState;
   readonly cstAddress: Address;
   readonly gameAddress: Address;
-}
-
-/** One LP position of the connected user. */
-export interface LpPosition {
-  readonly feeBps: number;
-  readonly shares: bigint;
-  readonly pendingFees: bigint;
 }
 
 /** The connected user's stake in one round. */
@@ -50,7 +43,10 @@ export interface UserSnapshot {
   readonly noBalance: bigint;
   readonly cstBalance: bigint;
   readonly cstAllowance: bigint;
-  readonly lpPositions: readonly LpPosition[];
+  /** LP position: shares, claimable fees, and the user's fee vote. */
+  readonly lpShares: bigint;
+  readonly lpPendingFees: bigint;
+  readonly lpDeclaredFeeBps: number;
 }
 
 export function roundPhase(
@@ -65,7 +61,7 @@ export function roundPhase(
 
 /** Whether betting is currently possible. */
 export function isTradable(s: RoundSnapshot): boolean {
-  return roundPhase(s) === "live";
+  return roundPhase(s) === "live" && poolIsTradable(s.pool);
 }
 
 /**
@@ -77,10 +73,7 @@ export function canAddLiquidity(s: RoundSnapshot): boolean {
   const phase = roundPhase(s);
   if (phase === "live") return true;
   return (
-    phase === "uninitialized" &&
-    s.roundId >= 1n &&
-    s.gameRoundNum === s.roundId &&
-    s.currentCount <= s.threshold
+    phase === "uninitialized" && s.roundId >= 1n && s.gameRoundNum === s.roundId && s.currentCount <= s.threshold
   );
 }
 
@@ -90,14 +83,14 @@ export function isResolvable(s: RoundSnapshot): boolean {
   return phase === "ended" || phase === "decided";
 }
 
-/** Total outcome tokens across all tier pools (a liquidity gauge). */
-export function totalLiquidity(pools: readonly TierPool[]): bigint {
-  return pools.reduce((acc, { pool }) => acc + pool.reserveYes + pool.reserveNo, 0n);
+/** Total outcome tokens in the pool (a liquidity gauge). */
+export function totalLiquidity(pool: PoolState): bigint {
+  return pool.reserveYes + pool.reserveNo;
 }
 
-/** Total unclaimed LP fee escrow across pools. */
-export function totalFeeReserve(pools: readonly TierPool[]): bigint {
-  return pools.reduce((acc, { pool }) => acc + pool.feeReserve, 0n);
+/** The pool's live weighted-average fee, in bps (number, for display). */
+export function poolFeeBps(pool: PoolState): number {
+  return Number(currentFeeBps(pool));
 }
 
 /**
@@ -105,14 +98,13 @@ export function totalFeeReserve(pools: readonly TierPool[]): bigint {
  * one"), in [0,1]:
  *  - resolved: exactly 0 or 1;
  *  - decided: 1 (the count already crossed);
- *  - otherwise: the liquidity-weighted pool-implied probability, or null when
- *    no pool has liquidity yet.
+ *  - otherwise: the pool-implied probability, or null when unfunded.
  */
 export function displayedProbability(s: RoundSnapshot): number | null {
   const phase = roundPhase(s);
   if (phase === "resolved") return s.yesWon ? 1 : 0;
   if (phase === "decided") return 1;
-  return aggregateProbabilityFloat(s.pools);
+  return probabilityFloat(s.pool);
 }
 
 /**
@@ -133,13 +125,8 @@ export function hasPosition(user: Pick<UserSnapshot, "yesBalance" | "noBalance">
   return user.yesBalance > 0n || user.noBalance > 0n;
 }
 
-export function hasLpPosition(user: Pick<UserSnapshot, "lpPositions">): boolean {
-  return user.lpPositions.some((p) => p.shares > 0n || p.pendingFees > 0n);
-}
-
-/** The pool for a tier, if it exists in the snapshot. */
-export function poolForTier(pools: readonly TierPool[], feeBps: number): PoolState | null {
-  return pools.find((p) => p.feeBps === feeBps)?.pool ?? null;
+export function hasLpPosition(user: Pick<UserSnapshot, "lpShares" | "lpPendingFees">): boolean {
+  return user.lpShares > 0n || user.lpPendingFees > 0n;
 }
 
 /** How far the current count is toward the threshold, in [0,1] (can exceed). */

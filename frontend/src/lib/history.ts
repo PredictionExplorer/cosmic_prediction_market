@@ -1,11 +1,13 @@
-import type { BetSide, PoolState, TierPool } from "./math";
-import { aggregateProbabilityFloat, applyBet, DEAD_SHARES, EMPTY_POOL } from "./math";
+import type { BetSide, PoolState } from "./math";
+import { applyBetWithNet, DEAD_SHARES, EMPTY_POOL, probabilityFloat } from "./math";
 
 /**
- * Event-sourced replay of one round's pools. The contract's events carry the
+ * Event-sourced replay of one round's pool. The contract's events carry the
  * exact reserve deltas (deposits, net swap amounts, withdrawals), so the full
  * pool state at any point in history is reconstructible from logs alone — no
- * archive node, no backward unwinding.
+ * archive node, no backward unwinding. Crucially, `Bet` events carry `netIn`,
+ * so replay never needs to know what the (time-varying, vote-driven) fee was
+ * at the moment of the bet.
  */
 
 /** A Bet event, decoded. Ordering fields sort exactly as the chain did. */
@@ -15,7 +17,6 @@ export interface BetEvent {
   readonly logIndex: number;
   readonly transactionHash: `0x${string}`;
   readonly user: `0x${string}`;
-  readonly feeBps: number;
   readonly side: BetSide;
   readonly cstIn: bigint;
   readonly netIn: bigint;
@@ -30,8 +31,8 @@ export interface LiquidityAddedEvent {
   readonly logIndex: number;
   readonly transactionHash: `0x${string}`;
   readonly provider: `0x${string}`;
-  readonly feeBps: number;
   readonly cstIn: bigint;
+  readonly declaredFeeBps: number;
   readonly sharesOut: bigint;
   readonly yesToPool: bigint;
   readonly noToPool: bigint;
@@ -45,7 +46,6 @@ export interface LiquidityRemovedEvent {
   readonly logIndex: number;
   readonly transactionHash: `0x${string}`;
   readonly provider: `0x${string}`;
-  readonly feeBps: number;
   readonly sharesIn: bigint;
   readonly yesOut: bigint;
   readonly noOut: bigint;
@@ -56,7 +56,7 @@ export interface LiquidityRemovedEvent {
 export type PoolEvent = BetEvent | LiquidityAddedEvent | LiquidityRemovedEvent;
 
 export interface ProbabilityPoint {
-  /** Market-wide P(YES) after this event, in [0,1]. */
+  /** P(YES) after this event, in [0,1]. */
   readonly probability: number;
   readonly blockNumber: bigint;
   readonly logIndex: number;
@@ -71,7 +71,13 @@ export function sortEvents<T extends { blockNumber: bigint; logIndex: number }>(
   });
 }
 
-/** Applies one event to its tier's pool, mirroring the contract exactly. */
+/**
+ * Applies one event to the pool, mirroring the contract exactly.
+ *
+ * Note on `feeWeight`: the events don't carry the removed voter's declaration,
+ * so replay tracks reserves/shares/escrow exactly and leaves the vote ledger
+ * out (the UI reads the live fee from the chain, not from history).
+ */
 export function applyPoolEvent(pool: PoolState, event: PoolEvent): PoolState {
   switch (event.kind) {
     case "add": {
@@ -92,33 +98,34 @@ export function applyPoolEvent(pool: PoolState, event: PoolEvent): PoolState {
         totalShares: pool.totalShares - event.sharesIn,
         feeReserve: pool.feeReserve - event.feesOut,
       };
-    case "bet":
-      return applyBet(event.side, pool, event.cstIn, BigInt(event.feeBps)).pool;
+    case "bet": {
+      // The event's netIn pins the historical fee exactly.
+      const fee = event.cstIn - event.netIn;
+      return applyBetWithNet(event.side, pool, fee, event.netIn).pool;
+    }
   }
 }
 
 export interface ReplayResult {
-  /** Market-wide probability after every event (skipping events that don't move it). */
+  /** P(YES) after every event. */
   readonly points: ProbabilityPoint[];
-  /** Final state of every tier pool touched by the events. */
-  readonly pools: TierPool[];
+  /** Final pool state implied by the events. */
+  readonly pool: PoolState;
 }
 
 /**
  * Replays all of one round's pool events forward, producing the probability
- * chart and the final per-tier pool states. The reconstruction is exact: the
- * end state must equal the current on-chain reserves (asserted in tests).
+ * chart and the final pool state. The reconstruction is exact for reserves,
+ * shares, and fee escrow: the end state must equal the current on-chain pool
+ * (asserted in tests).
  */
 export function replayRound(events: readonly PoolEvent[]): ReplayResult {
-  const pools = new Map<number, PoolState>();
+  let pool = EMPTY_POOL;
   const points: ProbabilityPoint[] = [];
 
   for (const event of sortEvents(events)) {
-    const current = pools.get(event.feeBps) ?? EMPTY_POOL;
-    pools.set(event.feeBps, applyPoolEvent(current, event));
-
-    const tierPools: TierPool[] = [...pools.entries()].map(([feeBps, pool]) => ({ feeBps, pool }));
-    const probability = aggregateProbabilityFloat(tierPools);
+    pool = applyPoolEvent(pool, event);
+    const probability = probabilityFloat(pool);
     if (probability !== null) {
       points.push({
         probability,
@@ -129,10 +136,5 @@ export function replayRound(events: readonly PoolEvent[]): ReplayResult {
     }
   }
 
-  return {
-    points,
-    pools: [...pools.entries()]
-      .map(([feeBps, pool]) => ({ feeBps, pool }))
-      .sort((a, b) => a.feeBps - b.feeBps),
-  };
+  return { points, pool };
 }

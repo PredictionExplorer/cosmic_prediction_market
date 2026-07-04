@@ -1,10 +1,10 @@
 /**
  * Pure bigint math mirroring `GestureSeriesMarket.sol` exactly (floor
  * division, `ceilDiv` rounding in the pool's favor). Keeping this in sync
- * with the contract lets the UI quote bets, route across fee tiers, preview
- * liquidity operations and replay history instantly without extra RPC calls —
- * and lets us property-test the lot (including bit-for-bit differential tests
- * against vectors produced by the real contract).
+ * with the contract lets the UI quote bets, preview liquidity operations and
+ * fee-vote shifts, and replay history instantly without extra RPC calls —
+ * and lets us property-test the lot (including bit-for-bit differential
+ * tests against vectors produced by the real contract).
  */
 
 export const ONE = 10n ** 18n;
@@ -15,7 +15,7 @@ export const DEAD_SHARES = 1_000n;
 export const MIN_PROB_BPS = 100n;
 export const MAX_PROB_BPS = 9_900n;
 
-/** One (round, feeTier) pool, exactly as the contract stores it. */
+/** One round's pool, exactly as the contract stores it. */
 export interface PoolState {
   readonly reserveYes: bigint;
   readonly reserveNo: bigint;
@@ -24,6 +24,8 @@ export interface PoolState {
   readonly accFeePerShare: bigint;
   /** CST escrowed for the pool's LPs' unclaimed fees. */
   readonly feeReserve: bigint;
+  /** The fee-vote ledger: sum over all holders of shares x declaredFeeBps. */
+  readonly feeWeight: bigint;
 }
 
 export const EMPTY_POOL: PoolState = {
@@ -32,15 +34,10 @@ export const EMPTY_POOL: PoolState = {
   totalShares: 0n,
   accFeePerShare: 0n,
   feeReserve: 0n,
+  feeWeight: 0n,
 };
 
 export type BetSide = "yes" | "no";
-
-/** A pool tagged with its fee tier, the unit the router works over. */
-export interface TierPool {
-  readonly feeBps: number;
-  readonly pool: PoolState;
-}
 
 // ---------------------------------------------------------------------
 // Primitives
@@ -67,35 +64,34 @@ export function buyAmount(reserveOut: bigint, reserveIn: bigint, net: bigint): b
   return net + reserveOut - ceilDiv(reserveOut * reserveIn, reserveIn + net);
 }
 
-/** Whether a pool can currently take a bet at all. */
+/** Whether the pool can currently take a bet at all. */
 export function poolIsTradable(pool: PoolState): boolean {
   return pool.totalShares > 0n && pool.reserveYes > 0n && pool.reserveNo > 0n;
 }
 
 // ---------------------------------------------------------------------
-// Probability
+// The fee vote
 // ---------------------------------------------------------------------
 
-/** P(YES) implied by one pool: reserveNo / (reserveYes + reserveNo), in [0,1]. */
-export function probabilityFloat(pool: Pick<PoolState, "reserveYes" | "reserveNo">): number | null {
-  const total = pool.reserveYes + pool.reserveNo;
-  if (total === 0n) return null;
-  const SCALE = 1_000_000n;
-  return Number((pool.reserveNo * SCALE) / total) / Number(SCALE);
+/** Mirrors `_poolFeeBps`: the share-weighted average fee (0 when unopened). */
+export function currentFeeBps(pool: Pick<PoolState, "feeWeight" | "totalShares">): bigint {
+  if (pool.totalShares === 0n) return 0n;
+  return pool.feeWeight / pool.totalShares;
 }
 
 /**
- * The market-wide P(YES): liquidity-weighted across all tier pools, which is
- * simply sum(reserveNo) / sum(reserveYes + reserveNo).
+ * The pool fee after an LP (re-)declares their whole position at `newFeeBps`
+ * — used to preview "your vote moves the fee from X to Y" for both
+ * `updateFeeDeclaration` and the re-declaration inside `addLiquidity`.
  */
-export function aggregateProbabilityFloat(pools: readonly TierPool[]): number | null {
-  let yes = 0n;
-  let no = 0n;
-  for (const { pool } of pools) {
-    yes += pool.reserveYes;
-    no += pool.reserveNo;
-  }
-  return probabilityFloat({ reserveYes: yes, reserveNo: no });
+export function feeAfterDeclarationChange(
+  pool: Pick<PoolState, "feeWeight" | "totalShares">,
+  lpShares: bigint,
+  oldFeeBps: bigint,
+  newFeeBps: bigint,
+): bigint {
+  const feeWeight = pool.feeWeight - lpShares * oldFeeBps + lpShares * newFeeBps;
+  return currentFeeBps({ feeWeight, totalShares: pool.totalShares });
 }
 
 // ---------------------------------------------------------------------
@@ -113,19 +109,29 @@ export interface BetResult {
   readonly pool: PoolState;
 }
 
-/** Mirrors `quoteBetYes` / `quoteBetNo`: 0 when the pool can't take the trade. */
-export function quoteBet(side: BetSide, pool: PoolState, cstIn: bigint, feeBps: bigint): bigint {
+/** Mirrors `quoteBetYes` / `quoteBetNo`: quotes at the pool's CURRENT
+ * weighted fee; 0 when the pool can't take the trade. */
+export function quoteBet(side: BetSide, pool: PoolState, cstIn: bigint): bigint {
   if (cstIn === 0n || !poolIsTradable(pool)) return 0n;
-  const { net } = takeFee(cstIn, feeBps);
+  const { net } = takeFee(cstIn, currentFeeBps(pool));
   return side === "yes"
     ? buyAmount(pool.reserveYes, pool.reserveNo, net)
     : buyAmount(pool.reserveNo, pool.reserveYes, net);
 }
 
 /** Mirrors `_bet`: quote plus the exact post-trade pool state. */
-export function applyBet(side: BetSide, pool: PoolState, cstIn: bigint, feeBps: bigint): BetResult {
+export function applyBet(side: BetSide, pool: PoolState, cstIn: bigint): BetResult {
   if (!poolIsTradable(pool)) throw new Error("applyBet: pool has no liquidity");
-  const { fee, net } = takeFee(cstIn, feeBps);
+  const { fee, net } = takeFee(cstIn, currentFeeBps(pool));
+  return applyBetWithNet(side, pool, fee, net);
+}
+
+/**
+ * The bet transition given an already-known fee/net split. History replay
+ * uses this with the `netIn` recorded in the event, so reconstruction stays
+ * exact even though the fee vote moved over time.
+ */
+export function applyBetWithNet(side: BetSide, pool: PoolState, fee: bigint, net: bigint): BetResult {
   const accFeePerShare = pool.accFeePerShare + (fee * ONE) / pool.totalShares;
   const feeReserve = pool.feeReserve + fee;
   if (side === "yes") {
@@ -158,30 +164,23 @@ export function applyBet(side: BetSide, pool: PoolState, cstIn: bigint, feeBps: 
   };
 }
 
-/**
- * Mirrors `_bestTier` / `quoteBet...Best`: the tier with the highest all-in
- * output; ties go to the lowest fee (pools are checked in ascending-fee
- * order, strictly-greater wins). Null when no pool can take the trade.
- */
-export function bestTier(
-  side: BetSide,
-  pools: readonly TierPool[],
-  cstIn: bigint,
-): { feeBps: number; tokensOut: bigint } | null {
-  const sorted = [...pools].sort((a, b) => a.feeBps - b.feeBps);
-  let best: { feeBps: number; tokensOut: bigint } | null = null;
-  for (const { feeBps, pool } of sorted) {
-    const out = quoteBet(side, pool, cstIn, BigInt(feeBps));
-    if (out > (best?.tokensOut ?? 0n)) best = { feeBps, tokensOut: out };
-  }
-  return best;
-}
-
 /** Applies a slippage tolerance (in bps) to a quoted amount, rounding down. */
 export function minTokensOutForSlippage(quoted: bigint, slippageBps: number): bigint {
   const bps = BigInt(Math.round(slippageBps));
   if (bps < 0n || bps > BPS) throw new Error("slippage out of range");
   return (quoted * (BPS - bps)) / BPS;
+}
+
+// ---------------------------------------------------------------------
+// Probability
+// ---------------------------------------------------------------------
+
+/** P(YES) implied by the pool: reserveNo / (reserveYes + reserveNo), in [0,1]. */
+export function probabilityFloat(pool: Pick<PoolState, "reserveYes" | "reserveNo">): number | null {
+  const total = pool.reserveYes + pool.reserveNo;
+  if (total === 0n) return null;
+  const SCALE = 1_000_000n;
+  return Number((pool.reserveNo * SCALE) / total) / Number(SCALE);
 }
 
 // ---------------------------------------------------------------------
@@ -199,13 +198,14 @@ export interface OpenPoolResult {
 /**
  * Mirrors `_openPool`: the first deposit seeds the reserves at the chosen
  * YES probability; the surplus side stays with the LP; `DEAD_SHARES` are
- * locked forever.
+ * locked forever and carry the opener's fee declaration.
  */
-export function openPool(cstIn: bigint, initialYesProbBps: bigint): OpenPoolResult {
+export function openPool(cstIn: bigint, initialYesProbBps: bigint, declaredFeeBps: bigint): OpenPoolResult {
   if (cstIn < MIN_INITIAL_LIQUIDITY) throw new Error("openPool: below minimum initial liquidity");
   if (initialYesProbBps < MIN_PROB_BPS || initialYesProbBps > MAX_PROB_BPS) {
     throw new Error("openPool: probability out of range");
   }
+  if (declaredFeeBps > MAX_FEE_BPS) throw new Error("openPool: fee declaration above the cap");
   let reserveYes: bigint;
   let reserveNo: bigint;
   if (initialYesProbBps <= BPS / 2n) {
@@ -225,6 +225,7 @@ export function openPool(cstIn: bigint, initialYesProbBps: bigint): OpenPoolResu
       totalShares: cstIn,
       accFeePerShare: 0n,
       feeReserve: 0n,
+      feeWeight: cstIn * declaredFeeBps,
     },
   };
 }
@@ -242,11 +243,17 @@ export interface JoinPoolResult {
 
 /**
  * Mirrors `_joinPool`: joins at the current reserve ratio; deposits round up,
- * shares round down; excess outcome tokens are credited back. Returns null
- * when the pool cannot accept the join (drained reserves or a deposit too
- * small to mint one share) — the contract reverts in those cases.
+ * shares round down; excess outcome tokens are credited back; the joiner's
+ * ENTIRE position (old shares included) is re-declared at `declaredFeeBps`.
+ * Returns null when the pool cannot accept the join (drained reserves or a
+ * deposit too small to mint one share) — the contract reverts in those cases.
  */
-export function joinPool(pool: PoolState, cstIn: bigint): JoinPoolResult | null {
+export function joinPool(
+  pool: PoolState,
+  cstIn: bigint,
+  declaredFeeBps: bigint,
+  existing: { shares: bigint; declaredFeeBps: bigint } = { shares: 0n, declaredFeeBps: 0n },
+): JoinPoolResult | null {
   const { reserveYes, reserveNo, totalShares } = pool;
   if (totalShares === 0n) throw new Error("joinPool: pool not opened yet");
   if (reserveYes === 0n || reserveNo === 0n) return null;
@@ -255,6 +262,7 @@ export function joinPool(pool: PoolState, cstIn: bigint): JoinPoolResult | null 
   if (sharesOut === 0n) return null;
   const depositYes = ceilDiv(cstIn * reserveYes, m);
   const depositNo = ceilDiv(cstIn * reserveNo, m);
+  const newShares = existing.shares + sharesOut;
   return {
     sharesOut,
     depositYes,
@@ -266,6 +274,7 @@ export function joinPool(pool: PoolState, cstIn: bigint): JoinPoolResult | null 
       reserveYes: reserveYes + depositYes,
       reserveNo: reserveNo + depositNo,
       totalShares: totalShares + sharesOut,
+      feeWeight: pool.feeWeight - existing.shares * existing.declaredFeeBps + newShares * declaredFeeBps,
     },
   };
 }
@@ -277,8 +286,12 @@ export interface RemoveLiquidityResult {
   readonly pool: PoolState;
 }
 
-/** Mirrors `removeLiquidity` (fees are settled separately via `pendingFees`). */
-export function removeLiquidity(pool: PoolState, shares: bigint): RemoveLiquidityResult {
+/**
+ * Mirrors `removeLiquidity` (fees are settled separately via `pendingFees`).
+ * `declaredFeeBps` is the remover's declaration — their departing shares
+ * stop voting.
+ */
+export function removeLiquidity(pool: PoolState, shares: bigint, declaredFeeBps: bigint): RemoveLiquidityResult {
   if (shares === 0n || shares > pool.totalShares) throw new Error("removeLiquidity: bad share amount");
   const yesOut = (pool.reserveYes * shares) / pool.totalShares;
   const noOut = (pool.reserveNo * shares) / pool.totalShares;
@@ -290,6 +303,7 @@ export function removeLiquidity(pool: PoolState, shares: bigint): RemoveLiquidit
       reserveYes: pool.reserveYes - yesOut,
       reserveNo: pool.reserveNo - noOut,
       totalShares: pool.totalShares - shares,
+      feeWeight: pool.feeWeight - shares * declaredFeeBps,
     },
   };
 }
@@ -306,7 +320,7 @@ export function pendingFees(shares: bigint, accFeePerShare: bigint, feeDebt: big
  */
 export function lpPositionValueFloat(pool: PoolState, shares: bigint, pending: bigint): number {
   if (pool.totalShares === 0n || shares === 0n) return Number(pending) / 1e18;
-  const { yesOut, noOut } = removeLiquidity(pool, shares);
+  const { yesOut, noOut } = removeLiquidity(pool, shares, 0n);
   const p = probabilityFloat(pool) ?? 0.5;
   return (Number(yesOut) * p + Number(noOut) * (1 - p) + Number(pending)) / 1e18;
 }

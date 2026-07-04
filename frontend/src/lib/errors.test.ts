@@ -38,7 +38,6 @@ describe("describeTxError", () => {
     expect(describeTxError(revertError("DeadlineExpired"))).toMatch(/expired/i);
     expect(describeTxError(revertError("InsufficientLiquidity"))).toMatch(/liquidity/i);
     expect(describeTxError(revertError("InsufficientShares"))).toMatch(/shares|paired/i);
-    expect(describeTxError(revertError("InvalidFeeTier"))).toMatch(/fee tier/i);
     expect(describeTxError(revertError("TransferFailed"))).toMatch(/transfer failed/i);
     expect(describeTxError(revertError("ReentrantCall"))).toMatch(/reentrancy/i);
   });

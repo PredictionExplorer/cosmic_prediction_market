@@ -81,7 +81,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
         <div className="space-y-6">
           {phase === "live" && (
             <BetPanel
-              pools={snapshot.pools}
+              pool={snapshot.pool}
               balance={connected && user ? user.cstBalance : null}
               allowance={connected && user ? user.cstAllowance : null}
               pendingAction={actions.pending === "approve" || actions.pending === "bet" ? actions.pending : null}
@@ -91,8 +91,10 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
             />
           )}
           <LiquidityPanel
-            pools={snapshot.pools}
-            lpPositions={user?.lpPositions ?? []}
+            pool={snapshot.pool}
+            lpShares={user?.lpShares ?? 0n}
+            lpPendingFees={user?.lpPendingFees ?? 0n}
+            lpDeclaredFeeBps={user?.lpDeclaredFeeBps ?? 0}
             canAdd={canAddLiquidity(snapshot)}
             balance={connected && user ? user.cstBalance : null}
             allowance={connected && user ? user.cstAllowance : null}
@@ -100,6 +102,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
               actions.pending === "approve" ||
               actions.pending === "addLiquidity" ||
               actions.pending === "removeLiquidity" ||
+              actions.pending === "updateFee" ||
               actions.pending === "claimFees"
                 ? actions.pending
                 : null
@@ -108,6 +111,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
             onApprove={(amount) => actions.approve(snapshot.cstAddress, amount)}
             onAdd={actions.addLiquidity}
             onRemove={actions.removeLiquidity}
+            onUpdateFee={actions.updateFeeDeclaration}
             onClaimFees={actions.claimFees}
           />
           {user && connected && (

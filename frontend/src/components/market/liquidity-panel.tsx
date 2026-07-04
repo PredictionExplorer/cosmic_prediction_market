@@ -1,49 +1,58 @@
 "use client";
 
-import { Droplets, HandCoins } from "lucide-react";
+import { Droplets, HandCoins, Vote } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatBps, formatCst, parseCstInput } from "@/lib/format";
-import type { LpPosition } from "@/lib/market";
-import type { TierPool } from "@/lib/math";
+import type { PoolState } from "@/lib/math";
 import {
-  DEAD_SHARES,
+  currentFeeBps,
+  feeAfterDeclarationChange,
   joinPool,
   MIN_INITIAL_LIQUIDITY,
   minTokensOutForSlippage,
   openPool,
-  probabilityFloat,
   removeLiquidity,
 } from "@/lib/math";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
 export interface LiquidityPanelProps {
-  pools: readonly TierPool[];
-  lpPositions: readonly LpPosition[];
+  pool: PoolState;
+  lpShares: bigint;
+  lpPendingFees: bigint;
+  /** The user's current fee vote, in bps. */
+  lpDeclaredFeeBps: number;
   /** Whether the round currently accepts new liquidity (live phase only). */
   canAdd: boolean;
   /** Null when no wallet is connected. */
   balance: bigint | null;
   allowance: bigint | null;
-  pendingAction: "approve" | "addLiquidity" | "removeLiquidity" | "claimFees" | null;
+  pendingAction: "approve" | "addLiquidity" | "removeLiquidity" | "updateFee" | "claimFees" | null;
   onConnect: () => void;
   onApprove: (amount: bigint) => Promise<boolean>;
-  onAdd: (feeBps: number, cstIn: bigint, initialYesProbBps: bigint, minSharesOut: bigint) => Promise<boolean>;
-  onRemove: (feeBps: number, shares: bigint, minYesOut: bigint, minNoOut: bigint) => Promise<boolean>;
-  onClaimFees: (feeBps: number) => Promise<boolean>;
+  onAdd: (cstIn: bigint, declaredFeeBps: number, initialYesProbBps: bigint, minSharesOut: bigint) => Promise<boolean>;
+  onRemove: (shares: bigint, minYesOut: bigint, minNoOut: bigint) => Promise<boolean>;
+  onUpdateFee: (newFeeBps: number) => Promise<boolean>;
+  onClaimFees: () => Promise<boolean>;
 }
 
 const SHARE_SLIPPAGE_BPS = 50;
 
+function formatPctInput(bps: number): string {
+  return (bps / 100).toLocaleString("en-US", { maximumFractionDigits: 1 });
+}
+
 /**
- * Provide liquidity into the fee tier of your choice and earn that tier's fee
- * on every bet. The first LP of a pool opens it at their chosen YES odds;
- * later deposits join at the pool's current ratio. Removing works at any
- * time — live, decided, or after resolution.
+ * Provide liquidity into the round's single pool and earn the trading fee on
+ * every bet, pro rata by shares. The fee itself is a liquidity-weighted VOTE:
+ * you declare the fee you want when depositing (and can re-vote anytime);
+ * the pool charges the share-weighted average of everyone's declarations.
  */
 export function LiquidityPanel({
-  pools,
-  lpPositions,
+  pool,
+  lpShares,
+  lpPendingFees,
+  lpDeclaredFeeBps,
   canAdd,
   balance,
   allowance,
@@ -52,66 +61,95 @@ export function LiquidityPanel({
   onApprove,
   onAdd,
   onRemove,
+  onUpdateFee,
   onClaimFees,
 }: LiquidityPanelProps) {
-  const [tier, setTier] = useState<number>(pools[0]?.feeBps ?? 100);
   const [mode, setMode] = useState<"add" | "remove">("add");
   const [input, setInput] = useState("");
   const [probPct, setProbPct] = useState(50);
+  const [feeVoteBps, setFeeVoteBps] = useState(200);
   const [removePct, setRemovePct] = useState(100);
+  const [showRevote, setShowRevote] = useState(false);
+  const [revoteBps, setRevoteBps] = useState<number | null>(null);
 
-  const selected = pools.find((p) => p.feeBps === tier) ?? pools[0];
-  const position = lpPositions.find((p) => p.feeBps === tier);
-  const poolOpen = (selected?.pool.totalShares ?? 0n) > 0n;
-
+  const poolOpen = pool.totalShares > 0n;
+  const poolFee = currentFeeBps(pool);
   const parsed = parseCstInput(input);
   const amount = parsed.value;
 
   const addPreview = useMemo(() => {
-    if (!selected || amount === null) return null;
+    if (amount === null) return null;
     if (!poolOpen) {
       if (amount < MIN_INITIAL_LIQUIDITY) return { error: "Below the minimum first deposit (0.001 CST)" } as const;
-      const result = openPool(amount, BigInt(probPct * 100));
-      return { shares: result.sharesOut, excessYes: result.excessYes, excessNo: result.excessNo, error: null } as const;
+      const result = openPool(amount, BigInt(probPct * 100), BigInt(feeVoteBps));
+      return {
+        shares: result.sharesOut,
+        excessYes: result.excessYes,
+        excessNo: result.excessNo,
+        feeAfter: BigInt(feeVoteBps),
+        error: null,
+      } as const;
     }
-    const result = joinPool(selected.pool, amount);
+    const result = joinPool(pool, amount, BigInt(feeVoteBps), {
+      shares: lpShares,
+      declaredFeeBps: BigInt(lpDeclaredFeeBps),
+    });
     if (result === null) return { error: "Deposit too small for this pool" } as const;
-    return { shares: result.sharesOut, excessYes: result.excessYes, excessNo: result.excessNo, error: null } as const;
-  }, [selected, amount, poolOpen, probPct]);
+    return {
+      shares: result.sharesOut,
+      excessYes: result.excessYes,
+      excessNo: result.excessNo,
+      feeAfter: currentFeeBps(result.pool),
+      error: null,
+    } as const;
+  }, [amount, poolOpen, probPct, feeVoteBps, pool, lpShares, lpDeclaredFeeBps]);
 
   const removePreview = useMemo(() => {
-    if (!selected || !position || position.shares === 0n) return null;
-    const shares = (position.shares * BigInt(removePct)) / 100n;
+    if (lpShares === 0n) return null;
+    const shares = (lpShares * BigInt(removePct)) / 100n;
     if (shares === 0n) return null;
-    const { yesOut, noOut } = removeLiquidity(selected.pool, shares);
+    const { yesOut, noOut } = removeLiquidity(pool, shares, BigInt(lpDeclaredFeeBps));
     return { shares, yesOut, noOut };
-  }, [selected, position, removePct]);
+  }, [pool, lpShares, lpDeclaredFeeBps, removePct]);
+
+  const revotePreview = useMemo(() => {
+    if (revoteBps === null || lpShares === 0n) return null;
+    return feeAfterDeclarationChange(pool, lpShares, BigInt(lpDeclaredFeeBps), BigInt(revoteBps));
+  }, [pool, lpShares, lpDeclaredFeeBps, revoteBps]);
 
   const connected = balance !== null;
   const insufficient = connected && amount !== null && amount > (balance ?? 0n);
   const needsApproval = connected && amount !== null && (allowance ?? 0n) < amount;
-  const poolProb = selected ? probabilityFloat(selected.pool) : null;
 
   const submitAdd = async () => {
     if (!connected) {
       onConnect();
       return;
     }
-    if (!selected || amount === null || !addPreview || addPreview.error !== null || insufficient) return;
+    if (amount === null || !addPreview || addPreview.error !== null || insufficient) return;
     if (needsApproval) {
       await onApprove(amount);
       return;
     }
     const minShares = minTokensOutForSlippage(addPreview.shares, SHARE_SLIPPAGE_BPS);
-    const ok = await onAdd(selected.feeBps, amount, BigInt(probPct * 100), minShares);
+    const ok = await onAdd(amount, feeVoteBps, BigInt(probPct * 100), minShares);
     if (ok) setInput("");
   };
 
   const submitRemove = async () => {
-    if (!selected || !removePreview) return;
+    if (!removePreview) return;
     const minYes = minTokensOutForSlippage(removePreview.yesOut, SHARE_SLIPPAGE_BPS);
     const minNo = minTokensOutForSlippage(removePreview.noOut, SHARE_SLIPPAGE_BPS);
-    await onRemove(selected.feeBps, removePreview.shares, minYes, minNo);
+    await onRemove(removePreview.shares, minYes, minNo);
+  };
+
+  const submitRevote = async () => {
+    if (revoteBps === null) return;
+    const ok = await onUpdateFee(revoteBps);
+    if (ok) {
+      setShowRevote(false);
+      setRevoteBps(null);
+    }
   };
 
   let addLabel: string;
@@ -119,7 +157,7 @@ export function LiquidityPanel({
   else if (amount === null) addLabel = "Enter an amount";
   else if (insufficient) addLabel = "Insufficient CST balance";
   else if (needsApproval) addLabel = "Approve CST";
-  else if (!poolOpen) addLabel = "Open pool & provide";
+  else if (!poolOpen) addLabel = "Open the pool & provide";
   else addLabel = "Add liquidity";
 
   return (
@@ -148,56 +186,42 @@ export function LiquidityPanel({
         </div>
       </div>
 
-      {/* Tier picker: choose the fee you're willing to accept. */}
-      <div className="mt-4">
-        <p className="text-[11px] text-ink-faint">Your fee — earned on every bet in your pool</p>
-        <div className="mt-1.5 grid grid-cols-3 gap-1.5" data-testid="lp-tier-selector">
-          {pools.map(({ feeBps, pool }) => {
-            const pos = lpPositions.find((p) => p.feeBps === feeBps);
-            const active = tier === feeBps;
-            return (
-              <button
-                key={feeBps}
-                data-testid={`lp-tier-${feeBps}`}
-                aria-pressed={active}
-                onClick={() => setTier(feeBps)}
-                className={[
-                  "rounded-xl border px-2 py-2 text-left transition-colors",
-                  active ? "border-nova/60 bg-nova/10" : "border-line hover:border-line-strong",
-                ].join(" ")}
-              >
-                <p className={`font-mono text-sm font-semibold ${active ? "text-nova-bright" : "text-ink"}`}>
-                  {formatBps(BigInt(feeBps))}
-                </p>
-                <p className="mt-0.5 truncate text-[10px] text-ink-faint">
-                  {pool.totalShares === 0n ? "empty" : `${formatCst(pool.reserveYes + pool.reserveNo)} tokens`}
-                  {pos && pos.shares > 0n ? " · yours" : ""}
-                </p>
-              </button>
-            );
-          })}
-        </div>
+      {/* The pool's live fee: a share-weighted vote. */}
+      <div className="mt-3 flex items-center justify-between rounded-xl border border-line bg-surface-2/40 px-3 py-2.5">
+        <span className="text-xs text-ink-faint">Pool fee — weighted vote of all LPs</span>
+        <span className="font-mono text-sm font-semibold text-nova-bright" data-testid="lp-pool-fee">
+          {poolOpen ? formatBps(poolFee) : "—"}
+        </span>
       </div>
 
-      {/* Your position in the selected tier */}
-      {position && (position.shares > 0n || position.pendingFees > 0n) && (
+      {/* Your position */}
+      {(lpShares > 0n || lpPendingFees > 0n) && (
         <div
           className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2/40 px-3 py-2.5"
           data-testid="lp-position"
         >
           <div className="text-xs text-ink-dim">
-            <span className="font-mono text-ink">{formatCst(position.shares)}</span> shares ·{" "}
-            <span className="font-mono text-higher" data-testid="lp-pending-fees">
-              {formatCst(position.pendingFees)}
-            </span>{" "}
-            CST fees earned
+            <span className="font-mono text-ink">{formatCst(lpShares)}</span> shares · voting{" "}
+            <button
+              className="font-mono text-nova-bright underline-offset-2 hover:underline"
+              onClick={() => {
+                setShowRevote((v) => !v);
+                setRevoteBps(lpDeclaredFeeBps);
+              }}
+              data-testid="lp-my-vote"
+              title="Change your fee vote"
+            >
+              {formatBps(BigInt(lpDeclaredFeeBps))}
+            </button>{" "}
+            · <span className="font-mono text-higher" data-testid="lp-pending-fees">{formatCst(lpPendingFees)}</span>{" "}
+            CST earned
           </div>
           <Button
             variant="outline"
             size="sm"
-            disabled={position.pendingFees === 0n}
+            disabled={lpPendingFees === 0n}
             loading={pendingAction === "claimFees"}
-            onClick={() => void onClaimFees(tier)}
+            onClick={() => void onClaimFees()}
             data-testid="claim-fees-button"
           >
             <HandCoins className="size-3.5" aria-hidden />
@@ -206,11 +230,53 @@ export function LiquidityPanel({
         </div>
       )}
 
+      {/* Re-vote without moving funds */}
+      {showRevote && lpShares > 0n && (
+        <div className="mt-3 rounded-xl border border-nova/30 bg-nova/8 p-3" data-testid="lp-revote">
+          <div className="flex items-baseline justify-between text-xs">
+            <span className="flex items-center gap-1.5 text-ink-dim">
+              <Vote className="size-3.5" aria-hidden /> Change your fee vote
+            </span>
+            <span className="font-mono font-semibold text-ink" data-testid="lp-revote-value">
+              {formatPctInput(revoteBps ?? lpDeclaredFeeBps)}%
+            </span>
+          </div>
+          <input
+            type="range"
+            className="cosmic-range mt-2"
+            min={0}
+            max={1000}
+            step={10}
+            value={revoteBps ?? lpDeclaredFeeBps}
+            onChange={(e) => setRevoteBps(Number(e.target.value))}
+            aria-label="Your fee vote"
+            data-testid="lp-revote-slider"
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-[11px] text-ink-faint" data-testid="lp-revote-preview">
+              {revotePreview !== null && <>Pool fee: {formatBps(poolFee)} → {formatBps(revotePreview)}</>}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              loading={pendingAction === "updateFee"}
+              onClick={() => void submitRevote()}
+              data-testid="lp-revote-submit"
+            >
+              Update vote
+            </Button>
+          </div>
+        </div>
+      )}
+
       {mode === "add" ? (
         !canAdd ? (
-          <p className="mt-4 rounded-xl border border-dashed border-line p-4 text-center text-xs text-ink-faint" data-testid="lp-add-closed">
-            Adding liquidity is closed for this round (it&apos;s decided, ended, or resolved). You can still remove
-            and claim fees at any time.
+          <p
+            className="mt-4 rounded-xl border border-dashed border-line p-4 text-center text-xs text-ink-faint"
+            data-testid="lp-add-closed"
+          >
+            Adding liquidity is closed for this round (it&apos;s decided, ended, or resolved). You can still remove,
+            re-vote, and claim fees at any time.
           </p>
         ) : (
           <>
@@ -245,6 +311,31 @@ export function LiquidityPanel({
               )}
             </div>
 
+            {/* Your fee vote (applies to your WHOLE position). */}
+            <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-3" data-testid="lp-fee-vote">
+              <div className="flex items-baseline justify-between text-xs">
+                <span className="text-ink-faint">Your fee vote — what bettors should pay</span>
+                <span className="font-mono font-semibold text-ink" data-testid="lp-fee-vote-value">
+                  {formatPctInput(feeVoteBps)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                className="cosmic-range mt-2"
+                min={0}
+                max={1000}
+                step={10}
+                value={feeVoteBps}
+                onChange={(e) => setFeeVoteBps(Number(e.target.value))}
+                aria-label="Your fee vote in percent"
+                data-testid="lp-fee-vote-slider"
+              />
+              <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
+                The pool charges the share-weighted average of all votes; earnings split by shares. Depositing
+                re-votes your whole position at this value.
+              </p>
+            </div>
+
             {/* First LP sets the opening odds. */}
             {!poolOpen && (
               <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-3" data-testid="lp-odds">
@@ -265,8 +356,8 @@ export function LiquidityPanel({
                   data-testid="lp-odds-slider"
                 />
                 <p className="mt-1.5 text-[11px] leading-relaxed text-ink-faint">
-                  You&apos;re the first LP in this pool: pick where the odds open. Misjudged odds are free money for
-                  arbitrageurs, so open near your honest estimate.
+                  You&apos;re the first LP: pick where the odds open. Misjudged odds are free money for arbitrageurs,
+                  so open near your honest estimate.
                 </p>
               </div>
             )}
@@ -277,7 +368,10 @@ export function LiquidityPanel({
               </p>
             )}
             {addPreview && addPreview.error === null && (
-              <dl className="mt-3 space-y-2 rounded-xl border border-line bg-surface-2/40 p-3 text-xs" data-testid="lp-add-preview">
+              <dl
+                className="mt-3 space-y-2 rounded-xl border border-line bg-surface-2/40 p-3 text-xs"
+                data-testid="lp-add-preview"
+              >
                 <div className="flex justify-between">
                   <dt className="text-ink-faint">LP shares</dt>
                   <dd className="font-mono font-semibold text-ink" data-testid="lp-preview-shares">
@@ -294,12 +388,13 @@ export function LiquidityPanel({
                     </dd>
                   </div>
                 )}
-                {!poolOpen && (
-                  <div className="flex justify-between">
-                    <dt className="text-ink-faint">Locked forever (anti-attack)</dt>
-                    <dd className="font-mono text-ink-dim">{DEAD_SHARES.toString()} share wei</dd>
-                  </div>
-                )}
+                <div className="flex justify-between">
+                  <dt className="text-ink-faint">Pool fee after your deposit</dt>
+                  <dd className="font-mono text-nova-bright" data-testid="lp-preview-fee">
+                    {poolOpen ? `${formatBps(poolFee)} → ` : ""}
+                    {formatBps(addPreview.feeAfter)}
+                  </dd>
+                </div>
               </dl>
             )}
 
@@ -323,9 +418,12 @@ export function LiquidityPanel({
         )
       ) : (
         <>
-          {!position || position.shares === 0n ? (
-            <p className="mt-4 rounded-xl border border-dashed border-line p-4 text-center text-xs text-ink-faint" data-testid="lp-no-position">
-              No LP position in the {formatBps(BigInt(tier))} pool{poolProb !== null ? "" : " — it hasn't been opened yet"}.
+          {lpShares === 0n ? (
+            <p
+              className="mt-4 rounded-xl border border-dashed border-line p-4 text-center text-xs text-ink-faint"
+              data-testid="lp-no-position"
+            >
+              No LP position in this round&apos;s pool.
             </p>
           ) : (
             <>
@@ -338,7 +436,7 @@ export function LiquidityPanel({
                 </div>
                 <input
                   type="range"
-                  className="cosmic-range mt-2"
+                  className="cosmic-range mt-3"
                   min={1}
                   max={100}
                   value={removePct}
@@ -356,7 +454,7 @@ export function LiquidityPanel({
                     </div>
                     <div className="flex justify-between">
                       <dt className="text-ink-faint">Plus accrued fees</dt>
-                      <dd className="font-mono text-higher">{formatCst(position.pendingFees)} CST</dd>
+                      <dd className="font-mono text-higher">{formatCst(lpPendingFees)} CST</dd>
                     </div>
                   </dl>
                 )}
@@ -373,7 +471,7 @@ export function LiquidityPanel({
               </Button>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-ink-faint">
                 Withdrawals work at ANY time — even mid-round or after resolution. Paired YES+NO tokens redeem 1:1
-                for CST; the unpaired rest is your market exposure.
+                for CST; the unpaired rest is your market exposure. Removed shares stop voting on the fee.
               </p>
             </>
           )}

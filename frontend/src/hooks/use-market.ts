@@ -6,14 +6,12 @@ import { useConnection, useReadContract, useReadContracts } from "wagmi";
 import { cosmicGameAbi } from "@/lib/abi/cosmic-game";
 import { erc20Abi } from "@/lib/abi/erc20";
 import { gestureSeriesMarketAbi } from "@/lib/abi/gesture-series-market";
-import type { LpPosition, RoundSnapshot, UserSnapshot } from "@/lib/market";
-import type { TierPool } from "@/lib/math";
+import type { RoundSnapshot, UserSnapshot } from "@/lib/market";
 
 const REFRESH_MS = 8_000;
 
 /** The series' immutable configuration — fetched once, cached forever. */
 export interface SeriesStatics {
-  readonly feeTiers: readonly number[];
   readonly cstAddress: Address;
   readonly gameAddress: Address;
 }
@@ -23,7 +21,6 @@ export function useSeriesStatics(series: Address | null) {
   const result = useReadContracts({
     allowFailure: false,
     contracts: [
-      { ...contract, functionName: "feeTiers" },
       { ...contract, functionName: "cst" },
       { ...contract, functionName: "game" },
     ],
@@ -37,8 +34,8 @@ export function useSeriesStatics(series: Address | null) {
 
   const statics: SeriesStatics | null = useMemo(() => {
     if (!result.data) return null;
-    const [tiers, cstAddress, gameAddress] = result.data;
-    return { feeTiers: tiers.map((t) => Number(t)), cstAddress, gameAddress };
+    const [cstAddress, gameAddress] = result.data;
+    return { cstAddress, gameAddress };
   }, [result.data]);
 
   return { statics, isLoading: result.isLoading, error: result.error, refetch: result.refetch };
@@ -57,11 +54,10 @@ export function useCurrentGameRound(statics: SeriesStatics | null) {
   });
 }
 
-/** Full state of one round: lifecycle flags + every tier pool. Polls. */
+/** Full state of one round: lifecycle flags + the pool. Polls. */
 export function useRoundSnapshot(series: Address | null, statics: SeriesStatics | null, roundId: bigint | null) {
   const contract = { address: series ?? undefined, abi: gestureSeriesMarketAbi } as const;
   const gameContract = { address: statics?.gameAddress, abi: cosmicGameAbi } as const;
-  const tiers = statics?.feeTiers ?? [];
 
   const result = useReadContracts({
     allowFailure: false,
@@ -70,10 +66,10 @@ export function useRoundSnapshot(series: Address | null, statics: SeriesStatics 
         ? []
         : [
             { ...contract, functionName: "roundState", args: [roundId] },
+            { ...contract, functionName: "pool", args: [roundId] },
             { ...gameContract, functionName: "roundNum" },
             // The would-be threshold, shown before anyone initializes the round.
             { ...gameContract, functionName: "bidderAddresses", args: [roundId === 0n ? 0n : roundId - 1n] },
-            ...tiers.map((tier) => ({ ...contract, functionName: "pool", args: [roundId, tier] }) as const),
           ],
     query: {
       enabled: series !== null && statics !== null && roundId !== null,
@@ -83,34 +79,30 @@ export function useRoundSnapshot(series: Address | null, statics: SeriesStatics 
 
   const snapshot: RoundSnapshot | null = useMemo(() => {
     if (!series || !statics || roundId === null || !result.data) return null;
-    const [state, gameRoundNum, prevRoundCount, ...poolRows] = result.data as [
+    const [state, poolRow, gameRoundNum, prevRoundCount] = result.data as [
       readonly [boolean, boolean, boolean, bigint, bigint, boolean, boolean],
+      readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint],
       bigint,
       bigint,
-      ...(readonly [bigint, bigint, bigint, bigint, bigint])[],
     ];
     const [initialized, resolved, yesWon, storedThreshold, currentCount] = state;
-    const threshold = initialized ? storedThreshold : prevRoundCount;
-    const pools: TierPool[] = poolRows.map((row, i) => ({
-      feeBps: statics.feeTiers[i],
-      pool: {
-        reserveYes: row[0],
-        reserveNo: row[1],
-        totalShares: row[2],
-        accFeePerShare: row[3],
-        feeReserve: row[4],
-      },
-    }));
     return {
       seriesAddress: series,
       roundId,
       initialized,
       resolved,
       yesWon,
-      threshold,
+      threshold: initialized ? storedThreshold : prevRoundCount,
       currentCount,
       gameRoundNum,
-      pools,
+      pool: {
+        reserveYes: poolRow[0],
+        reserveNo: poolRow[1],
+        totalShares: poolRow[2],
+        accFeePerShare: poolRow[3],
+        feeReserve: poolRow[4],
+        feeWeight: poolRow[5],
+      },
       cstAddress: statics.cstAddress,
       gameAddress: statics.gameAddress,
     };
@@ -119,12 +111,11 @@ export function useRoundSnapshot(series: Address | null, statics: SeriesStatics 
   return { snapshot, isLoading: result.isLoading, error: result.error, refetch: result.refetch };
 }
 
-/** The connected user's balances, allowance and LP positions for one round. */
+/** The connected user's balances, allowance and LP position for one round. */
 export function useUserSnapshot(series: Address | null, statics: SeriesStatics | null, roundId: bigint | null) {
   const { address } = useConnection();
   const contract = { address: series ?? undefined, abi: gestureSeriesMarketAbi } as const;
   const cstContract = { address: statics?.cstAddress, abi: erc20Abi } as const;
-  const tiers = statics?.feeTiers ?? [];
 
   const result = useReadContracts({
     allowFailure: false,
@@ -133,11 +124,9 @@ export function useUserSnapshot(series: Address | null, statics: SeriesStatics |
         ? []
         : [
             { ...contract, functionName: "balancesOf", args: [roundId, address] },
+            { ...contract, functionName: "lpPositionOf", args: [roundId, address] },
             { ...cstContract, functionName: "balanceOf", args: [address] },
             { ...cstContract, functionName: "allowance", args: [address, series ?? "0x"] },
-            ...tiers.map(
-              (tier) => ({ ...contract, functionName: "lpPositionOf", args: [roundId, tier, address] }) as const,
-            ),
           ],
     query: {
       enabled: series !== null && statics !== null && roundId !== null && !!address,
@@ -146,27 +135,24 @@ export function useUserSnapshot(series: Address | null, statics: SeriesStatics |
   });
 
   const user: UserSnapshot | null = useMemo(() => {
-    if (!result.data || !address || !statics) return null;
-    const [balances, cstBalance, cstAllowance, ...lpRows] = result.data as [
+    if (!result.data || !address) return null;
+    const [balances, lpRow, cstBalance, cstAllowance] = result.data as [
       readonly [bigint, bigint],
+      readonly [bigint, bigint, number],
       bigint,
       bigint,
-      ...(readonly [bigint, bigint])[],
     ];
-    const lpPositions: LpPosition[] = lpRows.map((row, i) => ({
-      feeBps: statics.feeTiers[i],
-      shares: row[0],
-      pendingFees: row[1],
-    }));
     return {
       address,
       yesBalance: balances[0],
       noBalance: balances[1],
       cstBalance,
       cstAllowance,
-      lpPositions,
+      lpShares: lpRow[0],
+      lpPendingFees: lpRow[1],
+      lpDeclaredFeeBps: Number(lpRow[2]),
     };
-  }, [result.data, address, statics]);
+  }, [result.data, address]);
 
   return { user, isLoading: result.isLoading, refetch: result.refetch };
 }

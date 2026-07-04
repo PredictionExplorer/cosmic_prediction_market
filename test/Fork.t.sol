@@ -33,11 +33,7 @@ contract ForkTest is Test {
             return;
         }
 
-        uint16[] memory tiers = new uint16[](3);
-        tiers[0] = 100;
-        tiers[1] = 200;
-        tiers[2] = 500;
-        GestureSeriesMarket market = new GestureSeriesMarket(game, tiers);
+        GestureSeriesMarket market = new GestureSeriesMarket(game);
 
         deal(CST, address(this), 10_000e18);
         IERC20(CST).approve(address(market), type(uint256).max);
@@ -48,19 +44,19 @@ contract ForkTest is Test {
         uint256 current = game.bidderAddresses(round);
         if (current > threshold) {
             vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
-            market.addLiquidity(round, 100, 1_000e18, 5_000, 0, type(uint256).max);
+            market.addLiquidity(round, 1_000e18, 200, 5_000, 0, type(uint256).max);
             emit log("Outcome already decided this round: init correctly refused");
             return;
         }
 
-        market.addLiquidity(round, 100, 1_000e18, 5_000, 0, type(uint256).max);
+        market.addLiquidity(round, 1_000e18, 200, 5_000, 0, type(uint256).max);
         (bool initialized,,, uint256 storedThreshold,,,) = market.roundState(round);
         assertTrue(initialized);
         assertEq(storedThreshold, threshold, "threshold read from the live game");
+        assertEq(market.currentFeeBps(round), 200, "sole LP's declaration is the fee");
 
-        (uint16 bestTier, uint256 quoted) = market.quoteBetYesBest(round, 100e18);
-        assertEq(bestTier, 100, "only funded tier must win routing");
-        uint256 out = market.betYes(round, 100, 100e18, quoted, type(uint256).max);
+        uint256 quoted = market.quoteBetYes(round, 100e18);
+        uint256 out = market.betYes(round, 100e18, quoted, type(uint256).max);
         assertEq(out, quoted, "fork bet must match its quote");
         assertGt(out, 0);
     }

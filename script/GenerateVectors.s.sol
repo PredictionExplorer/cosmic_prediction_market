@@ -11,13 +11,14 @@ import {MockCst, MockGame} from "../test/utils/Mocks.sol";
 /// in `frontend/src/lib/math.ts` can be asserted bit-for-bit against Solidity.
 /// The output is deterministic; CI regenerates it and fails on any drift.
 ///
-///   forge script script/GenerateVectors.s.sol
+///   forge script script/GenerateVectors.s.sol --tc GenerateVectors
 ///
 /// writes frontend/src/test/fixtures/contract-vectors.json
 contract GenerateVectors is Script {
     uint256 constant ROUND = 7;
     uint256 constant THRESHOLD = 800;
-    uint16[3] TIERS = [uint16(100), 200, 500];
+    address constant ACTOR = address(0xA11CE);
+    address constant JOINER = address(0xB0B);
 
     MockCst cst;
     MockGame game;
@@ -28,7 +29,8 @@ contract GenerateVectors is Script {
     function run() external {
         // Pure swap-math vectors over a wide magnitude sweep.
         string memory buyAmountJson = _buyAmountVectors();
-        // Full-flow vectors: open -> bet -> join -> bet -> remove, executed live.
+        // Full-flow vectors: open -> bet -> join -> re-vote -> bet -> remove,
+        // executed live against the contract.
         string memory flowsJson = _flowVectors();
 
         string memory json = string.concat("{\n\"buyAmount\": ", buyAmountJson, ",\n\"flows\": ", flowsJson, "\n}\n");
@@ -41,7 +43,7 @@ contract GenerateVectors is Script {
 
     function _buyAmountVectors() internal returns (string memory json) {
         _freshWorld();
-        VectorHarness harness = new VectorHarness(ICosmicSignatureGame(address(game)), _tiers());
+        VectorHarness harness = new VectorHarness(ICosmicSignatureGame(address(game)));
 
         json = "[";
         bool firstLocal = true;
@@ -80,6 +82,9 @@ contract GenerateVectors is Script {
     // Executed lifecycle flows
     // ------------------------------------------------------------------
 
+    GestureSeriesMarket market;
+    string obj;
+
     function _flowVectors() internal returns (string memory) {
         for (uint256 i = 0; i < 48; i++) {
             _oneFlow(i);
@@ -87,44 +92,44 @@ contract GenerateVectors is Script {
         return string.concat(out, "]");
     }
 
-    GestureSeriesMarket market;
-    uint16 tier;
-    string obj;
-
-    address constant ACTOR = address(0xA11CE);
-
     function _oneFlow(uint256 i) internal {
         uint256 seed = uint256(keccak256(abi.encode("flow", i)));
         _freshWorld();
-        market = new GestureSeriesMarket(ICosmicSignatureGame(address(game)), _tiers());
+        market = new GestureSeriesMarket(ICosmicSignatureGame(address(game)));
         cst.mint(ACTOR, type(uint128).max);
+        cst.mint(JOINER, type(uint128).max);
         vm.prank(ACTOR);
         cst.approve(address(market), type(uint256).max);
-        tier = TIERS[seed % 3];
+        vm.prank(JOINER);
+        cst.approve(address(market), type(uint256).max);
 
-        _stepOpen(1e15 + (seed >> 16) % 1e24, 100 + (seed >> 64) % 9_801);
+        // Casting is safe: every operand is reduced mod 1001 (max declaration + 1).
+        // forge-lint: disable-next-line(unsafe-typecast)
+        _stepOpen(1e15 + (seed >> 16) % 1e24, uint16(seed % 1_001), 100 + (seed >> 64) % 9_801);
         _stepBet(1 + (seed >> 96) % 1e23, (seed >> 128) % 2 == 0);
-        _stepJoin(1e6 + (seed >> 160) % 1e23);
+        _stepJoin(1e6 + (seed >> 160) % 1e23, uint16((seed >> 200) % 1_001));
+        _stepRevote(uint16((seed >> 216) % 1_001));
+        _stepBet2(1 + (seed >> 224) % 1e22);
         _stepRemove();
 
         out = string.concat(out, first ? "" : ",\n", obj, "}");
         first = false;
     }
 
-    function _stepOpen(uint256 liq, uint256 prob) internal {
+    function _stepOpen(uint256 liq, uint16 decl, uint256 prob) internal {
         obj = string.concat(
-            '{"tier":', vm.toString(tier), ',"liq":"', vm.toString(liq), '","probBps":', vm.toString(prob)
+            '{"liq":"', vm.toString(liq), '","openFeeBps":', vm.toString(decl), ',"probBps":', vm.toString(prob)
         );
         vm.prank(ACTOR);
-        uint256 shares = market.addLiquidity(ROUND, tier, liq, prob, 0, type(uint256).max);
+        uint256 shares = market.addLiquidity(ROUND, liq, decl, prob, 0, type(uint256).max);
         obj = string.concat(obj, _poolJson("open"), ',"openShares":"', vm.toString(shares), '"');
     }
 
     function _stepBet(uint256 betAmount, bool betIsYes) internal {
         vm.prank(ACTOR);
         uint256 betOut = betIsYes
-            ? market.betYes(ROUND, tier, betAmount, 0, type(uint256).max)
-            : market.betNo(ROUND, tier, betAmount, 0, type(uint256).max);
+            ? market.betYes(ROUND, betAmount, 0, type(uint256).max)
+            : market.betNo(ROUND, betAmount, 0, type(uint256).max);
         obj = string.concat(
             obj,
             ',"betYes":',
@@ -138,30 +143,52 @@ contract GenerateVectors is Script {
         );
     }
 
-    function _stepJoin(uint256 joinAmount) internal {
-        vm.prank(ACTOR);
-        uint256 joinShares = market.addLiquidity(ROUND, tier, joinAmount, 0, 0, type(uint256).max);
-        (uint256 joinYes, uint256 joinNo) = market.balancesOf(ROUND, ACTOR);
+    function _stepJoin(uint256 joinAmount, uint16 joinDecl) internal {
+        vm.prank(JOINER);
+        uint256 joinShares = market.addLiquidity(ROUND, joinAmount, joinDecl, 0, 0, type(uint256).max);
+        (uint256 joinYes, uint256 joinNo) = market.balancesOf(ROUND, JOINER);
         obj = string.concat(
             obj,
             ',"joinAmount":"',
             vm.toString(joinAmount),
-            '","joinShares":"',
+            '","joinFeeBps":',
+            vm.toString(joinDecl),
+            ',"joinShares":"',
             vm.toString(joinShares),
-            '","balanceYesAfterJoin":"',
+            '","joinerYesAfterJoin":"',
             vm.toString(joinYes),
-            '","balanceNoAfterJoin":"',
+            '","joinerNoAfterJoin":"',
             vm.toString(joinNo),
             '"',
             _poolJson("postJoin")
         );
     }
 
+    function _stepRevote(uint16 newDecl) internal {
+        vm.prank(ACTOR);
+        market.updateFeeDeclaration(ROUND, newDecl);
+        obj = string.concat(obj, ',"revoteFeeBps":', vm.toString(newDecl), _poolJson("postRevote"));
+    }
+
+    function _stepBet2(uint256 betAmount) internal {
+        vm.prank(ACTOR);
+        uint256 betOut = market.betYes(ROUND, betAmount, 0, type(uint256).max);
+        obj = string.concat(
+            obj,
+            ',"bet2Amount":"',
+            vm.toString(betAmount),
+            '","bet2Out":"',
+            vm.toString(betOut),
+            '"',
+            _poolJson("postBet2")
+        );
+    }
+
     function _stepRemove() internal {
-        (uint256 held,) = market.lpPositionOf(ROUND, tier, ACTOR);
+        (uint256 held,,) = market.lpPositionOf(ROUND, ACTOR);
         vm.prank(ACTOR);
         (uint256 yesOut, uint256 noOut, uint256 feesOut) =
-            market.removeLiquidity(ROUND, tier, held / 2, 0, 0, type(uint256).max);
+            market.removeLiquidity(ROUND, held / 2, 0, 0, type(uint256).max);
         obj = string.concat(
             obj,
             ',"removeShares":"',
@@ -177,9 +204,17 @@ contract GenerateVectors is Script {
         );
     }
 
-    function _poolJson(string memory prefix) internal view returns (string memory) {
-        (uint256 rY, uint256 rN, uint256 totalShares, uint256 acc, uint256 feeReserve) = market.pool(ROUND, tier);
-        return string.concat(
+    function _poolJson(string memory prefix) internal view returns (string memory json) {
+        (
+            uint256 rY,
+            uint256 rN,
+            uint256 totalShares,
+            uint256 acc,
+            uint256 feeReserve,
+            uint256 feeWeight,
+            uint256 feeBps
+        ) = market.pool(ROUND);
+        json = string.concat(
             ',"',
             prefix,
             'ReserveYes":"',
@@ -192,7 +227,11 @@ contract GenerateVectors is Script {
             prefix,
             'TotalShares":"',
             vm.toString(totalShares),
-            '","',
+            '"'
+        );
+        json = string.concat(
+            json,
+            ',"',
             prefix,
             'AccFeePerShare":"',
             vm.toString(acc),
@@ -200,6 +239,14 @@ contract GenerateVectors is Script {
             prefix,
             'FeeReserve":"',
             vm.toString(feeReserve),
+            '","',
+            prefix,
+            'FeeWeight":"',
+            vm.toString(feeWeight),
+            '","',
+            prefix,
+            'PoolFeeBps":"',
+            vm.toString(feeBps),
             '"'
         );
     }
@@ -210,17 +257,10 @@ contract GenerateVectors is Script {
         game.setRoundNum(ROUND);
         game.setNumBids(ROUND - 1, THRESHOLD);
     }
-
-    function _tiers() internal view returns (uint16[] memory tiers) {
-        tiers = new uint16[](3);
-        tiers[0] = TIERS[0];
-        tiers[1] = TIERS[1];
-        tiers[2] = TIERS[2];
-    }
 }
 
 contract VectorHarness is GestureSeriesMarket {
-    constructor(ICosmicSignatureGame game_, uint16[] memory tiers) GestureSeriesMarket(game_, tiers) {}
+    constructor(ICosmicSignatureGame game_) GestureSeriesMarket(game_) {}
 
     function exposedBuyAmount(uint256 reserveOut, uint256 reserveIn, uint256 net) external pure returns (uint256) {
         return _buyAmount(reserveOut, reserveIn, net);

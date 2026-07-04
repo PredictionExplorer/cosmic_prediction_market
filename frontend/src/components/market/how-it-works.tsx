@@ -9,8 +9,8 @@ const STEPS = [
   },
   {
     icon: Droplets,
-    title: "LPs pick their own fee",
-    body: "Liquidity lives in per-fee-tier pools (1% / 2% / 5%, Uniswap-style). Provide into the tier whose fee you're willing to accept and earn it on every bet, pro rata. Withdraw any time.",
+    title: "The fee is an LP vote",
+    body: "One pool per round. Every LP declares the fee they want; bettors pay the share-weighted average, and fee earnings split pro rata by shares. Re-vote or withdraw any time.",
   },
   {
     icon: Timer,

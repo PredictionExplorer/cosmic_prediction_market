@@ -17,6 +17,7 @@ export type ActionKind =
   | "bet"
   | "addLiquidity"
   | "removeLiquidity"
+  | "updateFee"
   | "claimFees"
   | "mint"
   | "redeem"
@@ -30,13 +31,11 @@ export interface MarketActions {
   /** Which action is currently mid-flight, if any (drives button spinners). */
   readonly pending: ActionKind | null;
   approve(cst: Address, amount: bigint): Promise<boolean>;
-  /** Bets through a specific fee tier with a slippage floor. */
-  bet(side: BetSide, feeBps: number, cstIn: bigint, minTokensOut: bigint): Promise<boolean>;
-  /** Bets through whichever tier executes best on-chain. */
-  betBest(side: BetSide, cstIn: bigint, minTokensOut: bigint): Promise<boolean>;
-  addLiquidity(feeBps: number, cstIn: bigint, initialYesProbBps: bigint, minSharesOut: bigint): Promise<boolean>;
-  removeLiquidity(feeBps: number, shares: bigint, minYesOut: bigint, minNoOut: bigint): Promise<boolean>;
-  claimFees(feeBps: number): Promise<boolean>;
+  bet(side: BetSide, cstIn: bigint, minTokensOut: bigint): Promise<boolean>;
+  addLiquidity(cstIn: bigint, declaredFeeBps: number, initialYesProbBps: bigint, minSharesOut: bigint): Promise<boolean>;
+  removeLiquidity(shares: bigint, minYesOut: bigint, minNoOut: bigint): Promise<boolean>;
+  updateFeeDeclaration(newFeeBps: number): Promise<boolean>;
+  claimFees(): Promise<boolean>;
   mintSets(amount: bigint): Promise<boolean>;
   redeemSets(amount: bigint): Promise<boolean>;
   resolve(): Promise<boolean>;
@@ -111,25 +110,12 @@ export function useMarketActions(series: Address | null, roundId: bigint | null)
   );
 
   const bet = useCallback(
-    (side: BetSide, feeBps: number, cstIn: bigint, minTokensOut: bigint) =>
-      run("bet", side === "yes" ? "Betting YES" : "Betting NO", () =>
-        writeContractAsync({
-          address: series as Address,
-          abi: gestureSeriesMarketAbi,
-          functionName: side === "yes" ? "betYes" : "betNo",
-          args: [roundId as bigint, feeBps, cstIn, minTokensOut, txDeadline()],
-        }),
-      ),
-    [run, writeContractAsync, series, roundId],
-  );
-
-  const betBest = useCallback(
     (side: BetSide, cstIn: bigint, minTokensOut: bigint) =>
       run("bet", side === "yes" ? "Betting YES" : "Betting NO", () =>
         writeContractAsync({
           address: series as Address,
           abi: gestureSeriesMarketAbi,
-          functionName: side === "yes" ? "betYesBest" : "betNoBest",
+          functionName: side === "yes" ? "betYes" : "betNo",
           args: [roundId as bigint, cstIn, minTokensOut, txDeadline()],
         }),
       ),
@@ -137,39 +123,52 @@ export function useMarketActions(series: Address | null, roundId: bigint | null)
   );
 
   const addLiquidity = useCallback(
-    (feeBps: number, cstIn: bigint, initialYesProbBps: bigint, minSharesOut: bigint) =>
+    (cstIn: bigint, declaredFeeBps: number, initialYesProbBps: bigint, minSharesOut: bigint) =>
       run("addLiquidity", "Adding liquidity", () =>
         writeContractAsync({
           address: series as Address,
           abi: gestureSeriesMarketAbi,
           functionName: "addLiquidity",
-          args: [roundId as bigint, feeBps, cstIn, initialYesProbBps, minSharesOut, txDeadline()],
+          args: [roundId as bigint, cstIn, declaredFeeBps, initialYesProbBps, minSharesOut, txDeadline()],
         }),
       ),
     [run, writeContractAsync, series, roundId],
   );
 
   const removeLiquidity = useCallback(
-    (feeBps: number, shares: bigint, minYesOut: bigint, minNoOut: bigint) =>
+    (shares: bigint, minYesOut: bigint, minNoOut: bigint) =>
       run("removeLiquidity", "Removing liquidity", () =>
         writeContractAsync({
           address: series as Address,
           abi: gestureSeriesMarketAbi,
           functionName: "removeLiquidity",
-          args: [roundId as bigint, feeBps, shares, minYesOut, minNoOut, txDeadline()],
+          args: [roundId as bigint, shares, minYesOut, minNoOut, txDeadline()],
+        }),
+      ),
+    [run, writeContractAsync, series, roundId],
+  );
+
+  const updateFeeDeclaration = useCallback(
+    (newFeeBps: number) =>
+      run("updateFee", "Updating fee vote", () =>
+        writeContractAsync({
+          address: series as Address,
+          abi: gestureSeriesMarketAbi,
+          functionName: "updateFeeDeclaration",
+          args: [roundId as bigint, newFeeBps],
         }),
       ),
     [run, writeContractAsync, series, roundId],
   );
 
   const claimFees = useCallback(
-    (feeBps: number) =>
+    () =>
       run("claimFees", "Claiming LP fees", () =>
         writeContractAsync({
           address: series as Address,
           abi: gestureSeriesMarketAbi,
           functionName: "claimFees",
-          args: [roundId as bigint, feeBps],
+          args: [roundId as bigint],
         }),
       ),
     [run, writeContractAsync, series, roundId],
@@ -227,5 +226,17 @@ export function useMarketActions(series: Address | null, roundId: bigint | null)
     [run, writeContractAsync, series, roundId],
   );
 
-  return { pending, approve, bet, betBest, addLiquidity, removeLiquidity, claimFees, mintSets, redeemSets, resolve, claim };
+  return {
+    pending,
+    approve,
+    bet,
+    addLiquidity,
+    removeLiquidity,
+    updateFeeDeclaration,
+    claimFees,
+    mintSets,
+    redeemSets,
+    resolve,
+    claim,
+  };
 }

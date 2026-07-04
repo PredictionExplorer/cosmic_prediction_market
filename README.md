@@ -6,17 +6,17 @@ every [Cosmic Signature](https://cosmicsignature.com) round:
 > **Will this round end with more gestures (bids) than the previous round?**
 
 Denominated in CST, resolved trustlessly from the Cosmic Signature game
-contract on Arbitrum One, with open multi-LP liquidity across **fee tiers the
-LPs choose themselves** (Uniswap-style). The whole series — every round,
-forever — is one dependency-free singleton contract with no owner, no admin
-keys, and no upgradability:
+contract on Arbitrum One, with open multi-LP liquidity in **one pool per
+round whose trading fee is a liquidity-weighted vote by the LPs themselves**.
+The whole series — every round, forever — is one dependency-free singleton
+contract with no owner, no admin keys, and no upgradability:
 [`src/GestureSeriesMarket.sol`](src/GestureSeriesMarket.sol).
 
 A polished web app lives in [`frontend/`](frontend/README.md) (Next.js +
 wagmi, deployable to Vercel): live YES-probability gauge and chart, the
-count-vs-threshold race, one-click bets auto-routed to the best fee tier,
-liquidity provision with per-tier fee earnings, and round navigation for
-resolving and claiming past rounds.
+count-vs-threshold race, one-click bets with exact client-side quotes,
+liquidity provision with fee voting and earnings tracking, and round
+navigation for resolving and claiming past rounds.
 
 ## How it works
 
@@ -29,22 +29,28 @@ resolving and claiming past rounds.
   (`redeemSets`), so the contract is fully collateralized by construction.
   YES pays 1 CST iff the final count is **strictly** greater than the
   threshold (a tie means NO wins); NO pays 1 CST otherwise.
-- **LPs choose their fee.** Liquidity lives in Uniswap-style constant-product
-  pools (x·y=k) between YES and NO — one pool per fee tier (default deploy:
-  1%, 2%, 5%). Anyone can provide liquidity into the tier whose fee they're
-  willing to accept and earns that fee on every bet in their pool, pro rata by
-  LP shares, claimable anytime (`claimFees`). A pool's implied probability is
-  `reserveNo / (reserveYes + reserveNo)`.
-  - The **first LP** of a pool opens it at their chosen YES probability (the
-    seeding returns the surplus side to them as outcome tokens).
+- **One pool per round; the fee is an LP vote.** Liquidity lives in a single
+  Uniswap-style constant-product pool (x·y=k) between YES and NO, whose
+  implied probability is `reserveNo / (reserveYes + reserveNo)`. Every LP
+  declares the fee they want when depositing (0–10%), and can re-declare
+  anytime with `updateFeeDeclaration`; bettors pay the **share-weighted
+  average** of all declarations:
+
+  ```
+  currentFeeBps = sum(shares_i x declaredFee_i) / totalShares
+  ```
+
+  Declarations set what bettors pay; fee **earnings** split pro rata by
+  shares regardless of what each LP declared (a vote, not a private price).
+  Fees accrue in CST and are claimable anytime (`claimFees`).
+  - The **first LP** opens the pool at their chosen YES probability (the
+    seeding returns the surplus side to them as outcome tokens) and their
+    declaration is the opening fee.
   - Later LPs join at the pool's current ratio; excess tokens are credited
-    back. Rounding always favors incumbent LPs.
+    back. Rounding always favors incumbent LPs. Removed shares stop voting.
 - **Betting** (`betYes`/`betNo`) mints sets with your CST and swaps the
-  unwanted side into the pool, so you hold only your side. `betYesBest` /
-  `betNoBest` route to whichever tier gives the best all-in execution —
-  cross-tier prices stay aligned because buying both sides across tiers and
-  redeeming pairs is a riskless arbitrage. To exit early, buy the opposite
-  side and `redeemSets`.
+  unwanted side into the pool, so you hold only your side. To exit early, buy
+  the opposite side and `redeemSets`.
 - **Resolution** is permissionless. When the round ends (the game's round
   counter advances), `resolve(round)` compares the final count against the
   threshold. And because the gesture count is public and **only ever
@@ -65,8 +71,12 @@ attack in [`test/GestureSeriesMarketHardening.t.sol`](test/GestureSeriesMarketHa
   a mandatory `minTokensOut` floor computed from the quote you saw — worse
   execution reverts instead of filling. Same-class guards exist everywhere:
   `minSharesOut` on adds, `minYesOut`/`minNoOut` on removes.
+- **Fee-jack sandwich**: a whale depositing a huge stake declared at the 10%
+  cap right before your bet jacks the average fee — and fails exactly like a
+  liquidity pull, because the higher fee pushes execution below your
+  `minTokensOut` floor. The average can never exceed the 10% declaration cap.
 - **Sandwiches and stale transactions**: slippage floors cap the damage at
-  exactly your tolerance, and every mutating call takes a `deadline`.
+  exactly your tolerance, and every price-sensitive call takes a `deadline`.
 - **Betting on a decided outcome**: bets and adds check the live count
   against the threshold in the same call — there is no block in which
   certainty can be traded at stale prices. Round-over trading is blocked by
@@ -124,23 +134,26 @@ frontend:
 
 - [`test/GestureSeriesMarket.t.sol`](test/GestureSeriesMarket.t.sol) — unit
   tests for every function: lazy initialization, tie semantics, early
-  resolution, per-tier isolation, LP share/fee exactness, every guard.
+  resolution, exact weighted-fee-vote math (opening, joining, re-voting,
+  removing), LP share/fee exactness, every guard.
 - [`test/GestureSeriesMarketFuzz.t.sol`](test/GestureSeriesMarketFuzz.t.sol) —
   property-based fuzz tests. Each states an economic/safety property that must
   hold for all inputs: CST conservation across the whole lifecycle, x·y=k
-  monotonicity, quotes equal execution, path independence, LP joins can't
-  extract value from incumbents, add-then-remove never profits, fee escrow
-  exact to the wei, best-tier routing beats every single tier, and the
-  resolution truth table matches strict comparison for all counts.
+  monotonicity, quotes equal execution (at any fee vote), path independence,
+  LP joins can't extract value from incumbents, add-then-remove never
+  profits, the fee-vote ledger always equals the naive per-holder sum, the
+  average is bounded by its voters' declarations and monotone in every vote,
+  fee escrow exact to the wei under changing votes, and the resolution truth
+  table matches strict comparison for all counts.
 - [`test/GestureSeriesMarketInvariant.t.sol`](test/GestureSeriesMarketInvariant.t.sol)
   — stateful invariant testing with `fail_on_revert`. A handler drives random
-  interleavings of the full multi-round lifecycle (LPs in and out of every
-  tier, bets, sets, gesture arrivals, threshold crossings, round rollovers,
-  early/normal resolutions, claims) while ghost variables track every wei.
-  After every call: exact collateralization, coherent share ledgers, fee
-  solvency. After every campaign: force-drain everything and prove everyone is
-  paid in full, with the retained remainder equal to dead-share reserves plus
-  fee dust — exactly.
+  interleavings of the full multi-round lifecycle (LPs in and out, fee
+  re-votes, bets, sets, gesture arrivals, threshold crossings, round
+  rollovers, early/normal resolutions, claims) while ghost variables track
+  every wei. After every call: exact collateralization, coherent share
+  ledgers, an exact fee-vote ledger, fee solvency. After every campaign:
+  force-drain everything and prove everyone is paid in full, with the
+  retained remainder equal to dead-share reserves plus fee dust — exactly.
 - [`test/GestureSeriesMarketHardening.t.sol`](test/GestureSeriesMarketHardening.t.sol)
   — the attack suite described above, one scripted adversary per mitigation.
 - [`script/GenerateVectors.s.sol`](script/GenerateVectors.s.sol) — executes
@@ -156,13 +169,12 @@ crank the `heavy` numbers up arbitrarily for overnight runs.
 Deploy the singleton **once**; every future round runs on it automatically:
 
 ```bash
-FEE_TIERS=100,200,500 \
 forge script script/Deploy.s.sol \
   --rpc-url $ARBITRUM_RPC_URL --private-key $PRIVATE_KEY --broadcast
 ```
 
-No pre-funding needed — liquidity arrives permissionlessly per round, from
-anyone, into the fee tier of their choice.
+No pre-funding, no parameters, no admin — liquidity arrives permissionlessly
+per round, from anyone, each LP voting the fee they want.
 
 For frontend development there is a local sandbox
 ([`script/DeployLocal.s.sol`](script/DeployLocal.s.sol)) that deploys a mock
@@ -182,6 +194,14 @@ game + mock CST + the series with seeded liquidity on anvil; see
   place extra gestures to push the count over the threshold. Each gesture
   costs real ETH/CST in the game, so modest pool sizes keep manipulation
   unprofitable.
+- **The fee vote is majority-by-capital, on purpose.** Your declaration is a
+  vote weighted by your shares, not a guaranteed private price: a bigger LP
+  can move the average against you. The trade-offs that make this acceptable:
+  the average is hard-capped at 10%, every declaration is public, re-voting
+  is one cheap transaction, exit is instant and always open — and bettors are
+  insulated from vote swings by their slippage floors. (The alternatives —
+  per-LP fee tiers or an order book — fragment liquidity or add heavy
+  infrastructure; see the git history for the tiered design.)
 - **The game is an owner-upgradeable proxy.** The market trusts its
   `roundNum` and `bidderAddresses` getters.
 - **Dead-share dust is the cost of inflation resistance.** Each pool

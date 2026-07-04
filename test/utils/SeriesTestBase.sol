@@ -9,9 +9,8 @@ import {MockCst, MockGame} from "./Mocks.sol";
 /// @notice Shared fixture for all GestureSeriesMarket test suites: mocks, the
 /// singleton series market, funded actors, and round/lifecycle helpers.
 abstract contract SeriesTestBase is Test {
-    uint16 internal constant TIER_LOW = 100; // 1%
-    uint16 internal constant TIER_MID = 200; // 2%
-    uint16 internal constant TIER_HIGH = 500; // 5%
+    uint16 internal constant FEE = 200; // the default fee declaration: 2%
+    uint256 internal constant MAX_FEE_BPS = 1_000;
 
     uint256 internal constant ROUND = 5;
     uint256 internal constant THRESHOLD = 800; // final count of ROUND - 1
@@ -37,7 +36,7 @@ abstract contract SeriesTestBase is Test {
         game.setRoundNum(ROUND);
         game.setNumBids(ROUND - 1, THRESHOLD);
 
-        market = new GestureSeriesMarket(ICosmicSignatureGame(address(game)), _defaultTiers());
+        market = new GestureSeriesMarket(ICosmicSignatureGame(address(game)));
 
         address[5] memory actors = [lpAda, lpBen, alice, bob, carol];
         for (uint256 i = 0; i < actors.length; i++) {
@@ -47,24 +46,17 @@ abstract contract SeriesTestBase is Test {
         }
     }
 
-    function _defaultTiers() internal pure returns (uint16[] memory tiers) {
-        tiers = new uint16[](3);
-        tiers[0] = TIER_LOW;
-        tiers[1] = TIER_MID;
-        tiers[2] = TIER_HIGH;
-    }
-
-    /// @dev Opens the (ROUND, tier) pool with `liq` CST at 50/50 odds via lpAda.
-    function _seedPool(uint16 tier, uint256 liq) internal returns (uint256 shares) {
+    /// @dev Opens ROUND's pool with `liq` CST at 50/50 odds and a 2% fee vote,
+    /// via lpAda.
+    function _seedPool(uint256 liq) internal returns (uint256 shares) {
         vm.prank(lpAda);
-        shares = market.addLiquidity(ROUND, tier, liq, 5_000, 0, NO_DEADLINE);
+        shares = market.addLiquidity(ROUND, liq, FEE, 5_000, 0, NO_DEADLINE);
     }
 
-    /// @dev Opens all three tiers of ROUND with `liq` each at 50/50 odds.
-    function _seedAllPools(uint256 liq) internal {
-        _seedPool(TIER_LOW, liq);
-        _seedPool(TIER_MID, liq);
-        _seedPool(TIER_HIGH, liq);
+    /// @dev Opens ROUND's pool with full control over the declaration and odds.
+    function _seedPoolWith(address lp, uint256 liq, uint16 feeBps, uint256 probBps) internal returns (uint256 shares) {
+        vm.prank(lp);
+        shares = market.addLiquidity(ROUND, liq, feeBps, probBps, 0, NO_DEADLINE);
     }
 
     /// @dev Ends ROUND with the given final gesture count (advances the game).
@@ -78,16 +70,32 @@ abstract contract SeriesTestBase is Test {
         game.setNumBids(ROUND, THRESHOLD + 1);
     }
 
-    function _reserves(uint256 roundId, uint16 tier) internal view returns (uint256 rY, uint256 rN) {
-        (rY, rN,,,) = market.pool(roundId, tier);
+    function _reserves(uint256 roundId) internal view returns (uint256 rY, uint256 rN) {
+        (rY, rN,,,,,) = market.pool(roundId);
     }
 
-    function _totalShares(uint256 roundId, uint16 tier) internal view returns (uint256 shares) {
-        (,, shares,,) = market.pool(roundId, tier);
+    function _totalShares(uint256 roundId) internal view returns (uint256 shares) {
+        (,, shares,,,,) = market.pool(roundId);
     }
 
-    function _feeReserve(uint256 roundId, uint16 tier) internal view returns (uint256 feeReserve) {
-        (,,,, feeReserve) = market.pool(roundId, tier);
+    function _feeReserve(uint256 roundId) internal view returns (uint256 feeReserve) {
+        (,,,, feeReserve,,) = market.pool(roundId);
+    }
+
+    function _feeWeight(uint256 roundId) internal view returns (uint256 feeWeight) {
+        (,,,,, feeWeight,) = market.pool(roundId);
+    }
+
+    function _lpShares(uint256 roundId, address who) internal view returns (uint256 shares) {
+        (shares,,) = market.lpPositionOf(roundId, who);
+    }
+
+    function _lpPending(uint256 roundId, address who) internal view returns (uint256 pending) {
+        (, pending,) = market.lpPositionOf(roundId, who);
+    }
+
+    function _lpDeclaration(uint256 roundId, address who) internal view returns (uint16 declared) {
+        (,, declared) = market.lpPositionOf(roundId, who);
     }
 
     function _yesBal(address who) internal view returns (uint256 yes) {
@@ -98,9 +106,9 @@ abstract contract SeriesTestBase is Test {
         (, no) = market.balancesOf(ROUND, who);
     }
 
-    /// @dev A pool's implied YES probability in bps: reserveNo / (rY + rN).
-    function _probBps(uint256 roundId, uint16 tier) internal view returns (uint256) {
-        (uint256 rY, uint256 rN) = _reserves(roundId, tier);
+    /// @dev The pool's implied YES probability in bps: reserveNo / (rY + rN).
+    function _probBps(uint256 roundId) internal view returns (uint256) {
+        (uint256 rY, uint256 rN) = _reserves(roundId);
         if (rY + rN == 0) return 0;
         return rN * BPS / (rY + rN);
     }

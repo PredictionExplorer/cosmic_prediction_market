@@ -30,11 +30,12 @@ describe("ActivityFeed", () => {
 
   it("describes every event kind in plain language", () => {
     const events: ActivityEvent[] = [
-      event({ kind: "bet", side: "yes", feeBps: 100, amount: 50n * ONE, secondary: 98n * ONE }),
-      event({ kind: "bet", side: "no", feeBps: 500, amount: 10n * ONE }),
+      event({ kind: "bet", side: "yes", amount: 50n * ONE, secondary: 98n * ONE }),
+      event({ kind: "bet", side: "no", amount: 10n * ONE }),
       event({ kind: "add", feeBps: 200, amount: 1_000n * ONE }),
-      event({ kind: "remove", feeBps: 200, amount: 400n * ONE }),
-      event({ kind: "feesClaimed", feeBps: 100, amount: 3n * ONE }),
+      event({ kind: "remove", amount: 400n * ONE }),
+      event({ kind: "feeVote", feeBps: 500, secondary: 200n }),
+      event({ kind: "feesClaimed", amount: 3n * ONE }),
       event({ kind: "mint", amount: 25n * ONE }),
       event({ kind: "redeem", amount: 5n * ONE }),
       event({ kind: "resolved", user: null, secondary: 950n, yesWon: true }),
@@ -43,10 +44,11 @@ describe("ActivityFeed", () => {
     render(<ActivityFeed events={events} isLoading={false} />);
 
     const feed = screen.getByTestId("activity-feed");
-    expect(feed).toHaveTextContent(/bet 50 CST on YES · 1% pool/);
-    expect(feed).toHaveTextContent(/bet 10 CST on NO · 5% pool/);
-    expect(feed).toHaveTextContent(/added 1,000 CST of liquidity · 2% pool/);
-    expect(feed).toHaveTextContent(/removed liquidity from the 2% pool/);
+    expect(feed).toHaveTextContent(/bet 50 CST on YES/);
+    expect(feed).toHaveTextContent(/bet 10 CST on NO/);
+    expect(feed).toHaveTextContent(/added 1,000 CST of liquidity · voting 2%/);
+    expect(feed).toHaveTextContent(/removed liquidity from the pool/);
+    expect(feed).toHaveTextContent(/re-voted the fee to 5%/);
     expect(feed).toHaveTextContent(/claimed 3 CST in LP fees/);
     expect(feed).toHaveTextContent(/minted 25 sets/);
     expect(feed).toHaveTextContent(/redeemed 5 sets for CST/);

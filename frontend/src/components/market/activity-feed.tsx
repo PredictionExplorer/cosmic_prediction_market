@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CheckCheck, Droplets, Flag, HandCoins, Layers, Undo2, Waves, X } from "lucide-react";
+import { Check, CheckCheck, Droplets, Flag, HandCoins, Layers, Undo2, Vote, Waves, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ActivityEvent } from "@/hooks/use-market-events";
 import { formatBps, formatCount, formatCst, timeAgo } from "@/lib/format";
@@ -34,7 +34,6 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
           <>
             bet <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span> on{" "}
             <span className={yes ? "font-semibold text-higher" : "font-semibold text-lower"}>{yes ? "YES" : "NO"}</span>
-            {event.feeBps !== null && <span className="text-ink-faint"> · {formatBps(BigInt(event.feeBps))} pool</span>}
           </>
         ),
       };
@@ -45,17 +44,26 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
         text: (
           <>
             added <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span> of liquidity
-            {event.feeBps !== null && <span className="text-ink-faint"> · {formatBps(BigInt(event.feeBps))} pool</span>}
+            {event.feeBps !== null && (
+              <span className="text-ink-faint"> · voting {formatBps(BigInt(event.feeBps))}</span>
+            )}
           </>
         ),
       };
     case "remove":
       return {
         icon: iconBubble("nova", <Waves className="size-3.5" aria-hidden />),
+        text: <>removed liquidity from the pool</>,
+      };
+    case "feeVote":
+      return {
+        icon: iconBubble("nova", <Vote className="size-3.5" aria-hidden />),
         text: (
           <>
-            removed liquidity
-            {event.feeBps !== null && <span className="text-ink-faint"> from the {formatBps(BigInt(event.feeBps))} pool</span>}
+            re-voted the fee to{" "}
+            <span className="font-mono font-semibold text-nova-bright">
+              {event.feeBps !== null ? formatBps(BigInt(event.feeBps)) : "—"}
+            </span>
           </>
         ),
       };

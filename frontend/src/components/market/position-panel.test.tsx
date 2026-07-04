@@ -17,18 +17,14 @@ function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
     threshold: 800n,
     currentCount: 500n,
     gameRoundNum: 5n,
-    pools: [
-      {
-        feeBps: 100,
-        pool: {
-          reserveYes: 1_000n * ONE,
-          reserveNo: 1_000n * ONE,
-          totalShares: 1_000n * ONE,
-          accFeePerShare: 0n,
-          feeReserve: 0n,
-        },
-      },
-    ],
+    pool: {
+      reserveYes: 1_000n * ONE,
+      reserveNo: 1_000n * ONE,
+      totalShares: 1_000n * ONE,
+      accFeePerShare: 0n,
+      feeReserve: 0n,
+      feeWeight: 1_000n * ONE * 200n,
+    },
     cstAddress: "0x2222222222222222222222222222222222222222",
     gameAddress: "0x3333333333333333333333333333333333333333",
     ...overrides,
@@ -42,7 +38,9 @@ function user(overrides: Partial<UserSnapshot> = {}): UserSnapshot {
     noBalance: 40n * ONE,
     cstBalance: 1_000n * ONE,
     cstAllowance: 0n,
-    lpPositions: [],
+    lpShares: 0n,
+    lpPendingFees: 0n,
+    lpDeclaredFeeBps: 0,
     ...overrides,
   };
 }

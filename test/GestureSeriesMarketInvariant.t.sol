@@ -9,8 +9,8 @@ import {SeriesTestBase} from "./utils/SeriesTestBase.sol";
 import {MockCst, MockGame} from "./utils/Mocks.sol";
 
 /// @notice Fuzzed actor that drives the series market through arbitrary
-/// interleavings of the full multi-round lifecycle: liquidity in and out of
-/// every fee tier, bets, set minting/redeeming, gesture-count bumps (including
+/// interleavings of the full multi-round lifecycle: liquidity in and out,
+/// fee re-votes, bets, set minting/redeeming, gesture-count bumps (including
 /// threshold crossings), round advancement, early and normal resolution, and
 /// claims. Every input is bounded so no call ever reverts — the suite runs
 /// with `fail_on_revert = true`, meaning ANY unexpected revert fails the run.
@@ -19,7 +19,6 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
     MockCst public immutable cst;
     MockGame public immutable game;
 
-    uint16[3] public tiers = [100, 200, 500];
     address[] public actors;
     uint256[] public roundsTouched; // every round that ever got initialized
 
@@ -51,19 +50,18 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
     // Fuzzed actions
     // ------------------------------------------------------------------
 
-    function addLiquidity(uint256 actorSeed, uint256 tierSeed, uint256 amount, uint256 probBps) external {
+    function addLiquidity(uint256 actorSeed, uint256 amount, uint256 declSeed, uint256 probBps) external {
         uint256 roundId = game.roundNum();
         if (roundId == 0) return;
         if (!_fundable(roundId)) return;
         address actor = _actor(actorSeed);
-        uint16 tier = _tier(tierSeed);
         amount = _bound(amount, 1e15, 100_000e18);
+        uint16 decl = uint16(_bound(declSeed, 0, 1_000));
         probBps = _bound(probBps, 100, 9_900);
 
-        // Joining a pool must be able to mint at least one share, and a pool
-        // dust-drained to a zero reserve (possible only after every LP left)
-        // is permanently closed to joins.
-        (uint256 rY, uint256 rN, uint256 totalShares,,) = market.pool(roundId, tier);
+        // Joining must be able to mint at least one share, and a pool
+        // dust-drained to a zero reserve is permanently closed to joins.
+        (uint256 rY, uint256 rN, uint256 totalShares,,,,) = market.pool(roundId);
         if (totalShares > 0) {
             if (rY == 0 || rN == 0) return;
             uint256 m = rY > rN ? rY : rN;
@@ -72,65 +70,61 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
 
         bool wasInitialized = _initialized(roundId);
         cst.mint(actor, amount);
-        (, uint256 pendingBefore) = market.lpPositionOf(roundId, tier, actor);
+        (, uint256 pendingBefore,) = market.lpPositionOf(roundId, actor);
         vm.prank(actor);
-        market.addLiquidity(roundId, tier, amount, probBps, 0, type(uint256).max);
+        market.addLiquidity(roundId, amount, decl, probBps, 0, type(uint256).max);
         ghost_cstIn += amount;
         ghost_cstOut += pendingBefore; // joining settles accrued fees in CST
         if (!wasInitialized) roundsTouched.push(roundId);
     }
 
-    function removeLiquidity(uint256 actorSeed, uint256 tierSeed, uint256 roundSeed, uint256 fraction) external {
+    function removeLiquidity(uint256 actorSeed, uint256 roundSeed, uint256 fraction) external {
         (uint256 roundId, bool ok) = _someRound(roundSeed);
         if (!ok) return;
         address actor = _actor(actorSeed);
-        uint16 tier = _tier(tierSeed);
-        (uint256 shares,) = market.lpPositionOf(roundId, tier, actor);
+        (uint256 shares,,) = market.lpPositionOf(roundId, actor);
         if (shares == 0) return;
         uint256 toBurn = _bound(fraction, 1, shares);
         vm.prank(actor);
-        (,, uint256 fees) = market.removeLiquidity(roundId, tier, toBurn, 0, 0, type(uint256).max);
+        (,, uint256 fees) = market.removeLiquidity(roundId, toBurn, 0, 0, type(uint256).max);
         ghost_cstOut += fees;
     }
 
-    function claimFees(uint256 actorSeed, uint256 tierSeed, uint256 roundSeed) external {
+    function updateFeeDeclaration(uint256 actorSeed, uint256 roundSeed, uint256 declSeed) external {
+        (uint256 roundId, bool ok) = _someRound(roundSeed);
+        if (!ok) return;
+        address actor = _actor(actorSeed);
+        (uint256 shares,,) = market.lpPositionOf(roundId, actor);
+        if (shares == 0) return;
+        vm.prank(actor);
+        market.updateFeeDeclaration(roundId, uint16(_bound(declSeed, 0, 1_000)));
+    }
+
+    function claimFees(uint256 actorSeed, uint256 roundSeed) external {
         (uint256 roundId, bool ok) = _someRound(roundSeed);
         if (!ok) return;
         address actor = _actor(actorSeed);
         vm.prank(actor);
-        uint256 fees = market.claimFees(roundId, _tier(tierSeed));
+        uint256 fees = market.claimFees(roundId);
         ghost_cstOut += fees;
     }
 
-    function bet(uint256 actorSeed, uint256 tierSeed, uint256 amount, bool yes, bool best) external {
+    function bet(uint256 actorSeed, uint256 amount, bool yes) external {
         uint256 roundId = game.roundNum();
         if (!_tradable(roundId)) return;
         address actor = _actor(actorSeed);
-        uint16 tier = _tier(tierSeed);
         amount = _bound(amount, 1, 100_000e18);
 
-        uint256 tokensOut;
-        uint16 usedTier = tier;
+        (uint256 rY, uint256 rN, uint256 totalShares,,,, uint256 feeBps) = market.pool(roundId);
+        if (totalShares == 0 || rY == 0 || rN == 0) return; // unfunded or dust-drained pool
+
         cst.mint(actor, amount);
-        if (best) {
-            (uint16 bestTier, uint256 quoted) =
-                yes ? market.quoteBetYesBest(roundId, amount) : market.quoteBetNoBest(roundId, amount);
-            if (quoted == 0) return; // no pool funded anywhere
-            usedTier = bestTier;
-            vm.prank(actor);
-            (, tokensOut) = yes
-                ? market.betYesBest(roundId, amount, 0, type(uint256).max)
-                : market.betNoBest(roundId, amount, 0, type(uint256).max);
-        } else {
-            (uint256 rY, uint256 rN, uint256 totalShares,,) = market.pool(roundId, tier);
-            if (totalShares == 0 || rY == 0 || rN == 0) return; // unfunded or dust-drained pool
-            vm.prank(actor);
-            tokensOut = yes
-                ? market.betYes(roundId, tier, amount, 0, type(uint256).max)
-                : market.betNo(roundId, tier, amount, 0, type(uint256).max);
-        }
+        vm.prank(actor);
+        uint256 tokensOut = yes
+            ? market.betYes(roundId, amount, 0, type(uint256).max)
+            : market.betNo(roundId, amount, 0, type(uint256).max);
         ghost_cstIn += amount;
-        require(tokensOut >= amount - amount * uint256(usedTier) / 10_000, "handler: token cost above 1 CST");
+        require(tokensOut >= amount - amount * feeBps / 10_000, "handler: token cost above 1 CST");
     }
 
     function mintSets(uint256 actorSeed, uint256 amount) external {
@@ -203,17 +197,14 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
             }
             for (uint256 a = 0; a < actors.length; a++) {
                 address actor = actors[a];
-                for (uint256 t = 0; t < 3; t++) {
-                    uint16 tier = tiers[t];
-                    (uint256 shares,) = market.lpPositionOf(roundId, tier, actor);
-                    if (shares > 0) {
-                        vm.prank(actor);
-                        (,, uint256 fees) = market.removeLiquidity(roundId, tier, shares, 0, 0, type(uint256).max);
-                        ghost_cstOut += fees;
-                    }
+                (uint256 shares,,) = market.lpPositionOf(roundId, actor);
+                if (shares > 0) {
                     vm.prank(actor);
-                    ghost_cstOut += market.claimFees(roundId, tier);
+                    (,, uint256 fees) = market.removeLiquidity(roundId, shares, 0, 0, type(uint256).max);
+                    ghost_cstOut += fees;
                 }
+                vm.prank(actor);
+                ghost_cstOut += market.claimFees(roundId);
                 vm.prank(actor);
                 ghost_cstOut += market.claim(roundId);
             }
@@ -226,10 +217,6 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
 
     function _actor(uint256 seed) internal view returns (address) {
         return actors[_bound(seed, 0, actors.length - 1)];
-    }
-
-    function _tier(uint256 seed) internal view returns (uint16) {
-        return tiers[_bound(seed, 0, 2)];
     }
 
     function _someRound(uint256 seed) internal view returns (uint256 roundId, bool ok) {
@@ -273,17 +260,18 @@ contract GestureSeriesMarketInvariantTest is SeriesTestBase {
         handler = new SeriesHandler(market, cst, game);
         targetContract(address(handler));
 
-        bytes4[] memory selectors = new bytes4[](10);
+        bytes4[] memory selectors = new bytes4[](11);
         selectors[0] = SeriesHandler.addLiquidity.selector;
         selectors[1] = SeriesHandler.removeLiquidity.selector;
-        selectors[2] = SeriesHandler.claimFees.selector;
-        selectors[3] = SeriesHandler.bet.selector;
-        selectors[4] = SeriesHandler.mintSets.selector;
-        selectors[5] = SeriesHandler.redeemSets.selector;
-        selectors[6] = SeriesHandler.gesturesArrive.selector;
-        selectors[7] = SeriesHandler.endRound.selector;
-        selectors[8] = SeriesHandler.resolve.selector;
-        selectors[9] = SeriesHandler.claim.selector;
+        selectors[2] = SeriesHandler.updateFeeDeclaration.selector;
+        selectors[3] = SeriesHandler.claimFees.selector;
+        selectors[4] = SeriesHandler.bet.selector;
+        selectors[5] = SeriesHandler.mintSets.selector;
+        selectors[6] = SeriesHandler.redeemSets.selector;
+        selectors[7] = SeriesHandler.gesturesArrive.selector;
+        selectors[8] = SeriesHandler.endRound.selector;
+        selectors[9] = SeriesHandler.resolve.selector;
+        selectors[10] = SeriesHandler.claim.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
     }
 
@@ -293,10 +281,6 @@ contract GestureSeriesMarketInvariantTest is SeriesTestBase {
         for (uint256 i = 0; i < n; i++) {
             list[i] = handler.actors(i);
         }
-    }
-
-    function _tiers() internal pure returns (uint16[3] memory) {
-        return [uint16(100), uint16(200), uint16(500)];
     }
 
     /// Exact cash-flow accounting: the market's CST balance always equals
@@ -312,85 +296,90 @@ contract GestureSeriesMarketInvariantTest is SeriesTestBase {
     /// The heart of solvency, exact to the wei at all times: the contract's
     /// CST balance equals the sum over every round of its outstanding-set
     /// liability (unresolved: the paired supply; resolved: the winning-side
-    /// supply) plus every pool's unclaimed fee escrow. As a corollary, YES and
+    /// supply) plus the pool's unclaimed fee escrow. As a corollary, YES and
     /// NO supplies match exactly while a round is unresolved.
     function invariant_exactCollateralization() public view {
         address[] memory actorList = _actors();
-        uint16[3] memory tiers = _tiers();
         uint256 liabilities;
-
         uint256 n = handler.roundsTouchedCount();
         for (uint256 i = 0; i < n; i++) {
-            uint256 roundId = handler.roundsTouched(i);
-            (, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
-
-            uint256 totalYes;
-            uint256 totalNo;
-            for (uint256 t = 0; t < 3; t++) {
-                (uint256 rY, uint256 rN,,, uint256 feeReserve) = market.pool(roundId, tiers[t]);
-                totalYes += rY;
-                totalNo += rN;
-                liabilities += feeReserve;
-            }
-            for (uint256 a = 0; a < actorList.length; a++) {
-                (uint256 yes, uint256 no) = market.balancesOf(roundId, actorList[a]);
-                totalYes += yes;
-                totalNo += no;
-            }
-
-            if (!resolved) {
-                assertEq(totalYes, totalNo, "outcome token supplies diverged");
-                liabilities += totalYes;
-            } else {
-                liabilities += yesWon ? totalYes : totalNo;
-            }
+            liabilities += _roundLiability(handler.roundsTouched(i), actorList);
         }
         assertEq(cst.balanceOf(address(market)), liabilities, "collateral != liabilities");
     }
 
-    /// Share accounting is always coherent: per pool, the actors' shares plus
-    /// the permanently locked dead shares equal totalShares, and the sum of
+    function _roundLiability(uint256 roundId, address[] memory actorList) internal view returns (uint256 liability) {
+        (, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
+        (uint256 totalYes, uint256 totalNo,,, uint256 feeReserve,,) = market.pool(roundId);
+
+        for (uint256 a = 0; a < actorList.length; a++) {
+            (uint256 yes, uint256 no) = market.balancesOf(roundId, actorList[a]);
+            totalYes += yes;
+            totalNo += no;
+        }
+        liability = feeReserve;
+        if (!resolved) {
+            assertEq(totalYes, totalNo, "outcome token supplies diverged");
+            liability += totalYes;
+        } else {
+            liability += yesWon ? totalYes : totalNo;
+        }
+    }
+
+    /// The fee-vote ledger is always exactly the naive sum over every holder
+    /// (actors + dead shares), and the resulting average never exceeds the cap.
+    function invariant_feeVoteLedgerExact() public view {
+        address[] memory actorList = _actors();
+        uint256 n = handler.roundsTouchedCount();
+        for (uint256 i = 0; i < n; i++) {
+            uint256 roundId = handler.roundsTouched(i);
+            (,, uint256 totalShares,,, uint256 feeWeight, uint256 feeBps) = market.pool(roundId);
+            if (totalShares == 0) continue;
+
+            (uint256 deadShares,, uint16 deadDecl) = market.lpPositionOf(roundId, address(0));
+            uint256 naive = deadShares * uint256(deadDecl);
+            for (uint256 a = 0; a < actorList.length; a++) {
+                (uint256 shares,, uint16 decl) = market.lpPositionOf(roundId, actorList[a]);
+                naive += shares * uint256(decl);
+            }
+            assertEq(feeWeight, naive, "fee ledger diverged from naive sum");
+            assertEq(feeBps, naive / totalShares, "average is not ledger / shares");
+            assertLe(feeBps, 1_000, "average above the cap");
+        }
+    }
+
+    /// Share accounting is always coherent: the actors' shares plus the
+    /// permanently locked dead shares equal totalShares, and the sum of
     /// everyone's pending fees never exceeds the pool's fee escrow.
     function invariant_shareAndFeeAccountingCoherent() public view {
         address[] memory actorList = _actors();
-        uint16[3] memory tiers = _tiers();
         uint256 n = handler.roundsTouchedCount();
         for (uint256 i = 0; i < n; i++) {
             uint256 roundId = handler.roundsTouched(i);
-            for (uint256 t = 0; t < 3; t++) {
-                _checkPoolLedger(roundId, tiers[t], actorList);
+            (,, uint256 totalShares,, uint256 feeReserve,,) = market.pool(roundId);
+            if (totalShares == 0) continue;
+            (uint256 sumShares,,) = market.lpPositionOf(roundId, address(0)); // dead shares
+            uint256 sumPending;
+            for (uint256 a = 0; a < actorList.length; a++) {
+                (uint256 shares, uint256 pending,) = market.lpPositionOf(roundId, actorList[a]);
+                sumShares += shares;
+                sumPending += pending;
             }
+            assertEq(sumShares, totalShares, "share ledger diverged");
+            assertLe(sumPending, feeReserve, "owed more fees than escrowed");
         }
     }
 
-    function _checkPoolLedger(uint256 roundId, uint16 tier, address[] memory actorList) internal view {
-        (,, uint256 totalShares,, uint256 feeReserve) = market.pool(roundId, tier);
-        if (totalShares == 0) return;
-        (uint256 sumShares,) = market.lpPositionOf(roundId, tier, address(0)); // dead shares
-        uint256 sumPending;
-        for (uint256 a = 0; a < actorList.length; a++) {
-            (uint256 shares, uint256 pending) = market.lpPositionOf(roundId, tier, actorList[a]);
-            sumShares += shares;
-            sumPending += pending;
-        }
-        assertEq(sumShares, totalShares, "share ledger diverged");
-        assertLe(sumPending, feeReserve, "owed more fees than escrowed");
-    }
-
-    /// Funded pools can never have an empty reserve while their round is
-    /// unresolved (the AMM never sells its last token).
+    /// A pool with real LPs can never have an empty reserve while its round
+    /// is unresolved (the AMM never sells its last token).
     function invariant_fundedPoolsNeverDrainWhileLive() public view {
-        uint16[3] memory tiers = _tiers();
         uint256 n = handler.roundsTouchedCount();
         for (uint256 i = 0; i < n; i++) {
             uint256 roundId = handler.roundsTouched(i);
-            for (uint256 t = 0; t < 3; t++) {
-                (uint256 rY, uint256 rN, uint256 totalShares,,) = market.pool(roundId, tiers[t]);
-                if (totalShares > DEAD_SHARES) {
-                    // A pool with real LPs always keeps both reserves alive.
-                    assertGe(rY, 1, "YES reserve emptied");
-                    assertGe(rN, 1, "NO reserve emptied");
-                }
+            (uint256 rY, uint256 rN, uint256 totalShares,,,,) = market.pool(roundId);
+            if (totalShares > DEAD_SHARES) {
+                assertGe(rY, 1, "YES reserve emptied");
+                assertGe(rN, 1, "NO reserve emptied");
             }
         }
     }
@@ -404,25 +393,10 @@ contract GestureSeriesMarketInvariantTest is SeriesTestBase {
         assertLe(handler.ghost_cstOut(), handler.ghost_cstIn(), "paid out more than ever came in");
 
         address[] memory actorList = _actors();
-        uint16[3] memory tiers = _tiers();
         uint256 expectedRetained;
         uint256 n = handler.roundsTouchedCount();
         for (uint256 i = 0; i < n; i++) {
-            uint256 roundId = handler.roundsTouched(i);
-            (, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
-            assertTrue(resolved, "teardown left a round unresolved");
-            for (uint256 t = 0; t < 3; t++) {
-                (uint256 rY, uint256 rN, uint256 totalShares,, uint256 feeReserve) = market.pool(roundId, tiers[t]);
-                if (totalShares != 0) {
-                    assertEq(totalShares, DEAD_SHARES, "an actor still holds shares after teardown");
-                }
-                expectedRetained += feeReserve + (yesWon ? rY : rN);
-            }
-            for (uint256 a = 0; a < actorList.length; a++) {
-                (uint256 yes, uint256 no) = market.balancesOf(roundId, actorList[a]);
-                assertEq(yes, 0, "unclaimed YES after teardown");
-                assertEq(no, 0, "unclaimed NO after teardown");
-            }
+            expectedRetained += _drainedRoundRetention(handler.roundsTouched(i), actorList);
         }
         assertEq(
             cst.balanceOf(address(market)),
@@ -434,5 +408,22 @@ contract GestureSeriesMarketInvariantTest is SeriesTestBase {
             handler.ghost_cstIn() - handler.ghost_cstOut(),
             "ghost flows diverged after teardown"
         );
+    }
+
+    /// @dev Asserts a force-drained round holds nothing but dead-share
+    /// reserves and fee dust, returning that exact retention.
+    function _drainedRoundRetention(uint256 roundId, address[] memory actorList) internal view returns (uint256) {
+        (, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
+        assertTrue(resolved, "teardown left a round unresolved");
+        (uint256 rY, uint256 rN, uint256 totalShares,, uint256 feeReserve,,) = market.pool(roundId);
+        if (totalShares != 0) {
+            assertEq(totalShares, DEAD_SHARES, "an actor still holds shares after teardown");
+        }
+        for (uint256 a = 0; a < actorList.length; a++) {
+            (uint256 yes, uint256 no) = market.balancesOf(roundId, actorList[a]);
+            assertEq(yes, 0, "unclaimed YES after teardown");
+            assertEq(no, 0, "unclaimed NO after teardown");
+        }
+        return feeReserve + (yesWon ? rY : rN);
     }
 }

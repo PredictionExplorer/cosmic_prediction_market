@@ -7,11 +7,10 @@ import {
   hasPosition,
   isResolvable,
   isTradable,
+  poolFeeBps,
   positionValueFloat,
-  poolForTier,
   roundPhase,
   thresholdProgress,
-  totalFeeReserve,
   totalLiquidity,
 } from "./market";
 import { ONE } from "./math";
@@ -30,28 +29,15 @@ function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
     threshold: 800n,
     currentCount: 500n,
     gameRoundNum: 5n,
-    pools: [
-      {
-        feeBps: 100,
-        pool: {
-          reserveYes: 1_000n * ONE,
-          reserveNo: 1_000n * ONE,
-          totalShares: 1_000n * ONE,
-          accFeePerShare: 0n,
-          feeReserve: 5n * ONE,
-        },
-      },
-      {
-        feeBps: 500,
-        pool: {
-          reserveYes: 300n * ONE,
-          reserveNo: 100n * ONE,
-          totalShares: 300n * ONE,
-          accFeePerShare: 0n,
-          feeReserve: 1n * ONE,
-        },
-      },
-    ],
+    pool: {
+      // NO-heavy pool: P(YES) = 3000/(1000+3000) = 75%.
+      reserveYes: 1_000n * ONE,
+      reserveNo: 3_000n * ONE,
+      totalShares: 1_000n * ONE,
+      accFeePerShare: 0n,
+      feeReserve: 5n * ONE,
+      feeWeight: 1_000n * ONE * 250n, // 2.5% weighted fee
+    },
     cstAddress: CST,
     gameAddress: GAME,
     ...overrides,
@@ -77,8 +63,9 @@ describe("roundPhase", () => {
 });
 
 describe("tradability and resolvability", () => {
-  it("only live rounds are tradable", () => {
+  it("only live rounds with a funded pool are tradable", () => {
     expect(isTradable(snapshot())).toBe(true);
+    expect(isTradable(snapshot({ pool: { ...snapshot().pool, totalShares: 0n } }))).toBe(false);
     expect(isTradable(snapshot({ currentCount: 801n }))).toBe(false);
     expect(isTradable(snapshot({ gameRoundNum: 6n }))).toBe(false);
     expect(isTradable(snapshot({ resolved: true }))).toBe(false);
@@ -106,9 +93,8 @@ describe("tradability and resolvability", () => {
 });
 
 describe("displayedProbability", () => {
-  it("aggregates pools while live (liquidity-weighted)", () => {
-    // reserveNo total = 1100, all reserves total = 2400.
-    expect(displayedProbability(snapshot())).toBeCloseTo(1_100 / 2_400);
+  it("reads the pool while live", () => {
+    expect(displayedProbability(snapshot())).toBeCloseTo(0.75);
   });
 
   it("pins to 1 when decided and to the winner when resolved", () => {
@@ -117,8 +103,8 @@ describe("displayedProbability", () => {
     expect(displayedProbability(snapshot({ resolved: true, yesWon: false }))).toBe(0);
   });
 
-  it("is null with no liquidity anywhere", () => {
-    expect(displayedProbability(snapshot({ pools: [] }))).toBeNull();
+  it("is null with no liquidity", () => {
+    expect(displayedProbability(snapshot({ pool: { ...snapshot().pool, reserveYes: 0n, reserveNo: 0n } }))).toBeNull();
   });
 });
 
@@ -134,28 +120,22 @@ describe("positionValueFloat", () => {
     expect(positionValueFloat(snapshot({ currentCount: 801n }), user)).toBeCloseTo(10);
   });
 
-  it("live: marked at the aggregate probability", () => {
-    const p = 1_100 / 2_400;
-    expect(positionValueFloat(snapshot(), user)).toBeCloseTo(10 * p + 4 * (1 - p));
+  it("live: marked at the pool probability", () => {
+    expect(positionValueFloat(snapshot(), user)).toBeCloseTo(10 * 0.75 + 4 * 0.25);
   });
 });
 
 describe("aggregates and helpers", () => {
-  it("totalLiquidity and totalFeeReserve sum across pools", () => {
-    expect(totalLiquidity(snapshot().pools)).toBe(2_400n * ONE);
-    expect(totalFeeReserve(snapshot().pools)).toBe(6n * ONE);
-  });
-
-  it("poolForTier finds exact tiers only", () => {
-    expect(poolForTier(snapshot().pools, 100)?.reserveYes).toBe(1_000n * ONE);
-    expect(poolForTier(snapshot().pools, 123)).toBeNull();
+  it("totalLiquidity and poolFeeBps read the pool", () => {
+    expect(totalLiquidity(snapshot().pool)).toBe(4_000n * ONE);
+    expect(poolFeeBps(snapshot().pool)).toBe(250);
   });
 
   it("hasPosition / hasLpPosition", () => {
     expect(hasPosition({ yesBalance: 0n, noBalance: 0n })).toBe(false);
     expect(hasPosition({ yesBalance: 1n, noBalance: 0n })).toBe(true);
-    expect(hasLpPosition({ lpPositions: [] })).toBe(false);
-    expect(hasLpPosition({ lpPositions: [{ feeBps: 100, shares: 0n, pendingFees: 1n }] })).toBe(true);
+    expect(hasLpPosition({ lpShares: 0n, lpPendingFees: 0n })).toBe(false);
+    expect(hasLpPosition({ lpShares: 0n, lpPendingFees: 1n })).toBe(true);
   });
 
   it("thresholdProgress caps sensibly", () => {

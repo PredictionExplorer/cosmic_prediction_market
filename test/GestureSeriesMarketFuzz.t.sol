@@ -7,7 +7,7 @@ import {SeriesTestBase} from "./utils/SeriesTestBase.sol";
 
 /// @dev Exposes the internal AMM math for direct property fuzzing.
 contract SeriesHarness is GestureSeriesMarket {
-    constructor(ICosmicSignatureGame game_, uint16[] memory tiers) GestureSeriesMarket(game_, tiers) {}
+    constructor(ICosmicSignatureGame game_) GestureSeriesMarket(game_) {}
 
     function exposedBuyAmount(uint256 reserveOut, uint256 reserveIn, uint256 net) external pure returns (uint256) {
         return _buyAmount(reserveOut, reserveIn, net);
@@ -22,7 +22,7 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
 
     function setUp() public override {
         super.setUp();
-        harness = new SeriesHarness(ICosmicSignatureGame(address(game)), _defaultTiers());
+        harness = new SeriesHarness(ICosmicSignatureGame(address(game)));
     }
 
     // ------------------------------------------------------------------
@@ -63,57 +63,172 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
     }
 
     // ------------------------------------------------------------------
-    // Construction
+    // Opening the pool
     // ------------------------------------------------------------------
 
-    function testFuzz_constructorAcceptsAnyValidTiers(uint256 seed, uint256 count) public {
-        count = bound(count, 1, 5);
-        uint16[] memory tiers = new uint16[](count);
-        uint16 prev = 0;
-        for (uint256 i = 0; i < count; i++) {
-            // Strictly ascending picks in (prev, 1000], leaving room for the rest.
-            uint16 maxHere = uint16(1_000 - (count - 1 - i));
-            uint16 tier = uint16(bound(uint256(keccak256(abi.encode(seed, i))), prev + 1, maxHere));
-            tiers[i] = tier;
-            prev = tier;
-        }
-        GestureSeriesMarket m = new GestureSeriesMarket(ICosmicSignatureGame(address(game)), tiers);
-        assertEq(m.feeTiers().length, count);
-    }
-
-    function testFuzz_constructorRejectsNonAscendingTiers(uint256 a, uint256 b) public {
-        uint16 first = uint16(bound(a, 1, 1_000));
-        uint16 second = uint16(bound(b, 0, first)); // <= first (or zero): never valid
-        uint16[] memory tiers = new uint16[](2);
-        tiers[0] = first;
-        tiers[1] = second;
-        vm.expectRevert(GestureSeriesMarket.InvalidParams.selector);
-        new GestureSeriesMarket(ICosmicSignatureGame(address(game)), tiers);
-    }
-
-    // ------------------------------------------------------------------
-    // Opening and joining pools
-    // ------------------------------------------------------------------
-
-    /// Opening a pool at any probability conserves tokens exactly (reserves +
-    /// excess = deposit on both sides), prices the pool at the requested
-    /// probability, and mints deposit-minus-dead shares.
-    function testFuzz_openPoolAtAnyProbability(uint256 liq, uint256 prob) public {
+    /// Opening at any probability and declaration conserves tokens exactly,
+    /// prices the pool at the requested probability, and makes the sole
+    /// voter's declaration the pool fee.
+    function testFuzz_openPoolAtAnyProbabilityAndFee(uint256 liq, uint256 prob, uint256 declSeed) public {
         liq = bound(liq, 1e15, 1e24);
         prob = bound(prob, 100, 9_900);
+        uint16 decl = uint16(bound(declSeed, 0, MAX_FEE_BPS));
 
         vm.prank(lpAda);
-        uint256 shares = market.addLiquidity(ROUND, TIER_LOW, liq, prob, 0, NO_DEADLINE);
+        uint256 shares = market.addLiquidity(ROUND, liq, decl, prob, 0, NO_DEADLINE);
 
-        (uint256 rY, uint256 rN) = _reserves(ROUND, TIER_LOW);
+        (uint256 rY, uint256 rN) = _reserves(ROUND);
         (uint256 yes, uint256 no) = market.balancesOf(ROUND, lpAda);
         assertEq(rY + yes, liq, "YES tokens conserved");
         assertEq(rN + no, liq, "NO tokens conserved");
         assertEq(shares, liq - DEAD_SHARES, "shares = deposit minus dead shares");
-        assertEq(_totalShares(ROUND, TIER_LOW), liq);
-        // Implied probability within 1 bps of the request (integer rounding).
-        assertApproxEqAbs(_probBps(ROUND, TIER_LOW), prob, 1, "opening odds off");
+        assertEq(_totalShares(ROUND), liq);
+        assertApproxEqAbs(_probBps(ROUND), prob, 1, "opening odds off");
+        assertEq(market.currentFeeBps(ROUND), decl, "sole voter sets the fee");
+        assertEq(_feeWeight(ROUND), liq * uint256(decl), "ledger seeded incl. dead shares");
     }
+
+    // ------------------------------------------------------------------
+    // The fee vote
+    // ------------------------------------------------------------------
+
+    /// The flagship fee property: after ANY sequence of adds (with fresh
+    /// declarations), re-votes and removes by two LPs, the ledger equals the
+    /// naive sum over all holders, and the average equals ledger / shares.
+    function testFuzz_feeLedgerMatchesNaiveRecomputation(
+        uint256[3] memory amounts,
+        uint256[3] memory decls,
+        uint256[3] memory actions,
+        uint256 openDecl
+    ) public {
+        uint16 opener = uint16(bound(openDecl, 0, MAX_FEE_BPS));
+        _seedPoolWith(lpAda, LIQ, opener, 5_000);
+
+        address[2] memory lps = [lpAda, lpBen];
+        for (uint256 i = 0; i < 3; i++) {
+            address lp = lps[i % 2];
+            uint16 decl = uint16(bound(decls[i], 0, MAX_FEE_BPS));
+            uint256 action = actions[i] % 3;
+            if (action == 0) {
+                uint256 amount = bound(amounts[i], 1, 1e23);
+                vm.prank(lp);
+                market.addLiquidity(ROUND, amount, decl, 0, 0, NO_DEADLINE);
+            } else if (action == 1) {
+                uint256 shares = _lpShares(ROUND, lp);
+                if (shares == 0) continue;
+                vm.prank(lp);
+                market.updateFeeDeclaration(ROUND, decl);
+            } else {
+                uint256 shares = _lpShares(ROUND, lp);
+                if (shares == 0) continue;
+                uint256 toBurn = bound(amounts[i], 1, shares);
+                vm.prank(lp);
+                market.removeLiquidity(ROUND, toBurn, 0, 0, NO_DEADLINE);
+            }
+        }
+
+        // Naive recomputation over every holder, dead shares included.
+        uint256 naive = _lpShares(ROUND, lpAda) * uint256(_lpDeclaration(ROUND, lpAda)) + _lpShares(ROUND, lpBen)
+            * uint256(_lpDeclaration(ROUND, lpBen)) + _lpShares(ROUND, address(0))
+            * uint256(_lpDeclaration(ROUND, address(0)));
+        assertEq(_feeWeight(ROUND), naive, "ledger diverged from naive sum");
+        assertEq(market.currentFeeBps(ROUND), naive / _totalShares(ROUND), "average is ledger / shares");
+        assertLe(market.currentFeeBps(ROUND), MAX_FEE_BPS, "average above the cap");
+    }
+
+    /// A weighted average always lies within [min, max] of its holders'
+    /// declarations (dead shares included).
+    function testFuzz_feeAverageBoundedByDeclarations(uint256 liqA, uint256 liqB, uint256 dA, uint256 dB) public {
+        liqA = bound(liqA, 1e15, 1e24);
+        liqB = bound(liqB, 1, 1e24);
+        uint16 declA = uint16(bound(dA, 0, MAX_FEE_BPS));
+        uint16 declB = uint16(bound(dB, 0, MAX_FEE_BPS));
+
+        _seedPoolWith(lpAda, liqA, declA, 5_000);
+        vm.prank(lpBen);
+        try market.addLiquidity(ROUND, liqB, declB, 0, 0, NO_DEADLINE) {}
+        catch {
+            return; // deposit too small to mint one share
+        }
+
+        uint256 lo = declA < declB ? declA : declB;
+        uint256 hi = declA > declB ? declA : declB;
+        uint256 avg = market.currentFeeBps(ROUND);
+        assertGe(avg, lo, "average below every declaration");
+        assertLe(avg, hi, "average above every declaration");
+    }
+
+    /// Raising your declaration can never lower the average; lowering it can
+    /// never raise the average.
+    function testFuzz_feeVoteMonotonicity(uint256 liqB, uint256 d0, uint256 d1) public {
+        _seedPoolWith(lpAda, LIQ, 500, 5_000);
+        liqB = bound(liqB, 1e15, 1e24);
+        uint16 before_ = uint16(bound(d0, 0, MAX_FEE_BPS));
+        uint16 after_ = uint16(bound(d1, 0, MAX_FEE_BPS));
+
+        vm.prank(lpBen);
+        market.addLiquidity(ROUND, liqB, before_, 0, 0, NO_DEADLINE);
+        uint256 avgBefore = market.currentFeeBps(ROUND);
+
+        vm.prank(lpBen);
+        market.updateFeeDeclaration(ROUND, after_);
+        uint256 avgAfter = market.currentFeeBps(ROUND);
+
+        if (after_ > before_) assertGe(avgAfter, avgBefore, "raising a vote lowered the average");
+        else if (after_ < before_) assertLe(avgAfter, avgBefore, "lowering a vote raised the average");
+        else assertEq(avgAfter, avgBefore, "identical vote moved the average");
+    }
+
+    /// Fee escrow is exact to the wei even while the fee changes between
+    /// bets: feeReserve equals the sum of floor(cstIn * feeAtBet / BPS).
+    function testFuzz_feeEscrowExactUnderChangingVotes(uint256[3] memory amounts, uint256[3] memory votes) public {
+        _seedPoolWith(lpAda, LIQ, 300, 5_000);
+
+        uint256 expectedEscrow;
+        for (uint256 i = 0; i < 3; i++) {
+            vm.prank(lpAda);
+            market.updateFeeDeclaration(ROUND, uint16(bound(votes[i], 0, MAX_FEE_BPS)));
+
+            uint256 amount = bound(amounts[i], 1, 200_000e18);
+            uint256 feeNow = market.currentFeeBps(ROUND);
+            vm.prank(alice);
+            if (i % 2 == 0) market.betYes(ROUND, amount, 0, NO_DEADLINE);
+            else market.betNo(ROUND, amount, 0, NO_DEADLINE);
+            expectedEscrow += amount * feeNow / BPS;
+        }
+        assertEq(_feeReserve(ROUND), expectedEscrow, "escrow diverged from per-bet fee sum");
+
+        // All pending claims fit inside the escrow, and paying them out
+        // leaves only accumulator dust.
+        uint256 adaPending = _lpPending(ROUND, lpAda);
+        assertLe(adaPending, expectedEscrow, "owed more than escrowed");
+        vm.prank(lpAda);
+        assertEq(market.claimFees(ROUND), adaPending);
+        assertLt(_feeReserve(ROUND), 1e6, "excess fee dust");
+    }
+
+    /// Fee earnings split by shares regardless of declarations: two LPs with
+    /// arbitrary votes earn identical per-share rates.
+    function testFuzz_feeEarningsProRataByShares(uint256 amount, uint256 dA, uint256 dB, uint256 liqB) public {
+        amount = bound(amount, 1e6, 200_000e18);
+        liqB = bound(liqB, 1e15, 1e24);
+        _seedPoolWith(lpAda, LIQ, uint16(bound(dA, 0, MAX_FEE_BPS)), 5_000);
+        vm.prank(lpBen);
+        market.addLiquidity(ROUND, liqB, uint16(bound(dB, 0, MAX_FEE_BPS)), 0, 0, NO_DEADLINE);
+
+        vm.prank(alice);
+        market.betYes(ROUND, amount, 0, NO_DEADLINE);
+
+        (uint256 adaShares, uint256 adaPending,) = market.lpPositionOf(ROUND, lpAda);
+        (uint256 benShares, uint256 benPending,) = market.lpPositionOf(ROUND, lpBen);
+        assertApproxEqAbs(
+            adaPending * 1e18 / adaShares, benPending * 1e18 / benShares, 1e6, "per-share fee rate differs between LPs"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Joining and removing liquidity
+    // ------------------------------------------------------------------
 
     /// Joining at any pool state never moves the price, conserves tokens, and
     /// the joiner's instantly-claimable cut can never exceed what they put in
@@ -126,28 +241,27 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         skew = bound(skew, 1, 1e23);
         add = bound(add, 1, 1e24);
 
-        vm.prank(lpAda);
-        market.addLiquidity(ROUND, TIER_LOW, liq, prob, 0, NO_DEADLINE);
+        _seedPoolWith(lpAda, liq, FEE, prob);
         vm.prank(alice);
-        if (skewYes) market.betYes(ROUND, TIER_LOW, skew, 0, NO_DEADLINE);
-        else market.betNo(ROUND, TIER_LOW, skew, 0, NO_DEADLINE);
+        if (skewYes) market.betYes(ROUND, skew, 0, NO_DEADLINE);
+        else market.betNo(ROUND, skew, 0, NO_DEADLINE);
 
-        (uint256 rY, uint256 rN) = _reserves(ROUND, TIER_LOW);
+        (uint256 rY, uint256 rN) = _reserves(ROUND);
         uint256 m = rY > rN ? rY : rN;
-        uint256 probBefore = _probBps(ROUND, TIER_LOW);
-        uint256 totalBefore = _totalShares(ROUND, TIER_LOW);
+        uint256 probBefore = _probBps(ROUND);
+        uint256 totalBefore = _totalShares(ROUND);
 
         vm.prank(lpBen);
-        try market.addLiquidity(ROUND, TIER_LOW, add, 0, 0, NO_DEADLINE) returns (uint256 shares) {
+        try market.addLiquidity(ROUND, add, FEE, 0, 0, NO_DEADLINE) returns (uint256 shares) {
             assertGt(shares, 0);
-            assertApproxEqAbs(_probBps(ROUND, TIER_LOW), probBefore, 1, "join moved the price");
+            assertApproxEqAbs(_probBps(ROUND), probBefore, 1, "join moved the price");
 
-            (uint256 rY2, uint256 rN2) = _reserves(ROUND, TIER_LOW);
+            (uint256 rY2, uint256 rN2) = _reserves(ROUND);
             (uint256 yes, uint256 no) = market.balancesOf(ROUND, lpBen);
             assertEq(rY2 - rY + yes, add, "YES tokens conserved on join");
             assertEq(rN2 - rN + no, add, "NO tokens conserved on join");
 
-            uint256 total2 = _totalShares(ROUND, TIER_LOW);
+            uint256 total2 = _totalShares(ROUND);
             assertEq(total2, totalBefore + shares);
             // Pro-rata claim right after joining <= what was deposited into the pool.
             assertLe(rY2 * shares / total2, rY2 - rY, "joiner could extract YES from incumbents");
@@ -159,20 +273,20 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         }
     }
 
-    /// Add-then-remove immediately can never pay out more CST-equivalent value
-    /// than went in, for any pool state (no free-mint pump).
+    /// Add-then-remove immediately can never pay out more CST-equivalent
+    /// value than went in, for any pool state (no free-mint pump).
     function testFuzz_addRemoveRoundtripNeverProfits(uint256 skew, bool skewYes, uint256 add) public {
         skew = bound(skew, 1, 1e23);
         add = bound(add, 1e6, 1e24);
-        _seedPool(TIER_LOW, LIQ);
+        _seedPool(LIQ);
         vm.prank(alice);
-        if (skewYes) market.betYes(ROUND, TIER_LOW, skew, 0, NO_DEADLINE);
-        else market.betNo(ROUND, TIER_LOW, skew, 0, NO_DEADLINE);
+        if (skewYes) market.betYes(ROUND, skew, 0, NO_DEADLINE);
+        else market.betNo(ROUND, skew, 0, NO_DEADLINE);
 
         uint256 cstBefore = cst.balanceOf(lpBen);
         vm.startPrank(lpBen);
-        uint256 shares = market.addLiquidity(ROUND, TIER_LOW, add, 0, 0, NO_DEADLINE);
-        market.removeLiquidity(ROUND, TIER_LOW, shares, 0, 0, NO_DEADLINE);
+        uint256 shares = market.addLiquidity(ROUND, add, FEE, 0, 0, NO_DEADLINE);
+        market.removeLiquidity(ROUND, shares, 0, 0, NO_DEADLINE);
         (uint256 yes, uint256 no) = market.balancesOf(ROUND, lpBen);
         market.redeemSets(ROUND, yes < no ? yes : no);
         vm.stopPrank();
@@ -188,49 +302,51 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
     // Betting properties
     // ------------------------------------------------------------------
 
-    /// Quotes must exactly equal executed bets, from any skewed pool state,
-    /// on every tier.
-    function testFuzz_quotesMatchBetsFromAnyState(uint256 skew, bool skewYes, uint256 amount, uint256 tierSeed) public {
-        uint16 tier = _tierAt(tierSeed);
+    /// Quotes must exactly equal executed bets, from any skewed pool state
+    /// and any fee vote — including right after a re-vote.
+    function testFuzz_quotesMatchBetsFromAnyState(uint256 skew, bool skewYes, uint256 amount, uint256 newVote) public {
         skew = bound(skew, 1, 1e23);
         amount = bound(amount, 1, 1e23);
-        _seedAllPools(LIQ);
+        _seedPool(LIQ);
 
         vm.prank(bob);
-        if (skewYes) market.betYes(ROUND, tier, skew, 0, NO_DEADLINE);
-        else market.betNo(ROUND, tier, skew, 0, NO_DEADLINE);
+        if (skewYes) market.betYes(ROUND, skew, 0, NO_DEADLINE);
+        else market.betNo(ROUND, skew, 0, NO_DEADLINE);
+        vm.prank(lpAda);
+        market.updateFeeDeclaration(ROUND, uint16(bound(newVote, 0, MAX_FEE_BPS)));
 
-        uint256 quotedYes = market.quoteBetYes(ROUND, tier, amount);
-        uint256 quotedNo = market.quoteBetNo(ROUND, tier, amount);
+        uint256 quotedYes = market.quoteBetYes(ROUND, amount);
+        uint256 quotedNo = market.quoteBetNo(ROUND, amount);
 
         uint256 snap = vm.snapshotState();
         vm.prank(alice);
-        assertEq(market.betYes(ROUND, tier, amount, 0, NO_DEADLINE), quotedYes, "YES quote mismatch");
+        assertEq(market.betYes(ROUND, amount, 0, NO_DEADLINE), quotedYes, "YES quote mismatch");
         vm.revertToState(snap);
         vm.prank(alice);
-        assertEq(market.betNo(ROUND, tier, amount, 0, NO_DEADLINE), quotedNo, "NO quote mismatch");
+        assertEq(market.betNo(ROUND, amount, 0, NO_DEADLINE), quotedNo, "NO quote mismatch");
     }
 
-    /// After ANY sequence of bets on one pool: the probability stays in
-    /// (0, 10000), k never decreases, reserves never empty, and every bet
-    /// pays at least its net input in tokens.
+    /// After ANY sequence of bets: the probability stays in (0, 10000), k
+    /// never decreases, reserves never empty, and every bet pays at least its
+    /// net input in tokens.
     function testFuzz_arbitraryBetSequenceKeepsPoolHealthy(uint256[4] memory amounts, uint8 dirMask) public {
-        _seedPool(TIER_MID, LIQ);
-        (uint256 rY, uint256 rN) = _reserves(ROUND, TIER_MID);
+        _seedPool(LIQ);
+        (uint256 rY, uint256 rN) = _reserves(ROUND);
         uint256 kBefore = rY * rN;
 
         for (uint256 i = 0; i < amounts.length; i++) {
             uint256 amount = bound(amounts[i], 1, 250_000e18);
+            uint256 feeNow = market.currentFeeBps(ROUND);
             vm.prank(alice);
             uint256 tokensOut = (dirMask >> i) & 1 == 1
-                ? market.betYes(ROUND, TIER_MID, amount, 0, NO_DEADLINE)
-                : market.betNo(ROUND, TIER_MID, amount, 0, NO_DEADLINE);
-            assertGe(tokensOut, amount - amount * uint256(TIER_MID) / BPS, "token cost above 1 CST");
+                ? market.betYes(ROUND, amount, 0, NO_DEADLINE)
+                : market.betNo(ROUND, amount, 0, NO_DEADLINE);
+            assertGe(tokensOut, amount - amount * feeNow / BPS, "token cost above 1 CST");
 
-            (rY, rN) = _reserves(ROUND, TIER_MID);
+            (rY, rN) = _reserves(ROUND);
             assertGe(rY, 1, "YES reserve emptied");
             assertGe(rN, 1, "NO reserve emptied");
-            uint256 prob = _probBps(ROUND, TIER_MID);
+            uint256 prob = _probBps(ROUND);
             assertGt(prob, 0, "probability pinned to 0");
             assertLt(prob, BPS, "probability pinned to 1");
             assertGe(rY * rN, kBefore, "k decreased");
@@ -239,36 +355,36 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
     }
 
     /// A bet split into two parts must give (near) identical tokens as one
-    /// bet: path independence up to integer rounding.
+    /// bet: path independence up to integer rounding. (Bets never change the
+    /// fee, so the fee is constant across the split.)
     function testFuzz_splitBetEquivalentToSingleBet(uint256 a, uint256 b) public {
         a = bound(a, 1e18, 100_000e18);
         b = bound(b, 1e18, 100_000e18);
-        _seedPool(TIER_LOW, LIQ);
+        _seedPool(LIQ);
 
         uint256 snap = vm.snapshotState();
         vm.startPrank(alice);
-        uint256 split =
-            market.betYes(ROUND, TIER_LOW, a, 0, NO_DEADLINE) + market.betYes(ROUND, TIER_LOW, b, 0, NO_DEADLINE);
+        uint256 split = market.betYes(ROUND, a, 0, NO_DEADLINE) + market.betYes(ROUND, b, 0, NO_DEADLINE);
         vm.stopPrank();
 
         vm.revertToState(snap);
         vm.prank(alice);
-        uint256 single = market.betYes(ROUND, TIER_LOW, a + b, 0, NO_DEADLINE);
+        uint256 single = market.betYes(ROUND, a + b, 0, NO_DEADLINE);
 
         assertApproxEqAbs(split, single, 4, "path dependence beyond rounding");
     }
 
     /// Any minTokensOut above the true output must revert — the guard that
-    /// defeats liquidity-pull and sandwich games.
+    /// defeats liquidity pulls, sandwiches, and fee-vote jumps alike.
     function testFuzz_slippageGuardAlwaysEnforced(uint256 amount, uint256 excess) public {
         amount = bound(amount, 1, 500_000e18);
         excess = bound(excess, 1, type(uint128).max);
-        _seedPool(TIER_HIGH, LIQ);
-        uint256 quoted = market.quoteBetYes(ROUND, TIER_HIGH, amount);
+        _seedPool(LIQ);
+        uint256 quoted = market.quoteBetYes(ROUND, amount);
 
         vm.expectRevert(GestureSeriesMarket.Slippage.selector);
         vm.prank(alice);
-        market.betYes(ROUND, TIER_HIGH, amount, quoted + excess, NO_DEADLINE);
+        market.betYes(ROUND, amount, quoted + excess, NO_DEADLINE);
     }
 
     /// No money pump: betting both sides and redeeming pairs pre-resolution
@@ -277,112 +393,21 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         skew = bound(skew, 1, 500_000e18);
         a = bound(a, 1, 400_000e18);
         b = bound(b, 1, 400_000e18);
-        _seedPool(TIER_LOW, LIQ);
+        _seedPool(LIQ);
 
         vm.prank(bob);
-        if (skewYes) market.betYes(ROUND, TIER_LOW, skew, 0, NO_DEADLINE);
-        else market.betNo(ROUND, TIER_LOW, skew, 0, NO_DEADLINE);
+        if (skewYes) market.betYes(ROUND, skew, 0, NO_DEADLINE);
+        else market.betNo(ROUND, skew, 0, NO_DEADLINE);
 
         uint256 aliceStart = cst.balanceOf(alice);
         vm.startPrank(alice);
-        market.betYes(ROUND, TIER_LOW, a, 0, NO_DEADLINE);
-        market.betNo(ROUND, TIER_LOW, b, 0, NO_DEADLINE);
+        market.betYes(ROUND, a, 0, NO_DEADLINE);
+        market.betNo(ROUND, b, 0, NO_DEADLINE);
         (uint256 yes, uint256 no) = market.balancesOf(ROUND, alice);
         market.redeemSets(ROUND, yes < no ? yes : no);
         vm.stopPrank();
 
         assertLe(cst.balanceOf(alice), aliceStart, "pre-resolution profit extraction");
-    }
-
-    /// Cross-tier routing: the best-tier bet is at least as good as betting
-    /// the same amount on ANY single tier, for any pool configuration.
-    function testFuzz_bestTierRoutingIsOptimal(
-        uint256[3] memory liqs,
-        uint256[3] memory skews,
-        uint8 dirMask,
-        uint256 amount,
-        bool yes
-    ) public {
-        amount = bound(amount, 1, 1e23);
-        uint16[3] memory tiers = [TIER_LOW, TIER_MID, TIER_HIGH];
-        for (uint256 i = 0; i < 3; i++) {
-            uint256 liq = bound(liqs[i], 1e15, 1e23);
-            vm.prank(lpAda);
-            market.addLiquidity(ROUND, tiers[i], liq, 5_000, 0, NO_DEADLINE);
-            uint256 skew = bound(skews[i], 1, 1e22);
-            vm.prank(bob);
-            if ((dirMask >> i) & 1 == 1) market.betYes(ROUND, tiers[i], skew, 0, NO_DEADLINE);
-            else market.betNo(ROUND, tiers[i], skew, 0, NO_DEADLINE);
-        }
-
-        (, uint256 bestQuote) = yes ? market.quoteBetYesBest(ROUND, amount) : market.quoteBetNoBest(ROUND, amount);
-        for (uint256 i = 0; i < 3; i++) {
-            uint256 single =
-                yes ? market.quoteBetYes(ROUND, tiers[i], amount) : market.quoteBetNo(ROUND, tiers[i], amount);
-            assertGe(bestQuote, single, "router missed a better tier");
-        }
-
-        vm.prank(alice);
-        (, uint256 executed) =
-            yes ? market.betYesBest(ROUND, amount, 0, NO_DEADLINE) : market.betNoBest(ROUND, amount, 0, NO_DEADLINE);
-        assertEq(executed, bestQuote, "best-tier execution must match its quote");
-    }
-
-    // ------------------------------------------------------------------
-    // Fees
-    // ------------------------------------------------------------------
-
-    /// Fee escrow is exact to the wei: after any bets, feeReserve equals the
-    /// per-bet floor formula sum; all LP claims together never exceed it and
-    /// leave at most share-rounding dust.
-    function testFuzz_feeAccountingExactAndConserved(uint256[3] memory amounts, uint8 dirMask, uint256 benLiq) public {
-        _seedPool(TIER_MID, LIQ);
-        benLiq = bound(benLiq, 1e15, 1e23);
-        vm.prank(lpBen);
-        market.addLiquidity(ROUND, TIER_MID, benLiq, 0, 0, NO_DEADLINE);
-
-        uint256 expectedFees;
-        for (uint256 i = 0; i < amounts.length; i++) {
-            uint256 amount = bound(amounts[i], 1, 200_000e18);
-            vm.prank(alice);
-            if ((dirMask >> i) & 1 == 1) market.betYes(ROUND, TIER_MID, amount, 0, NO_DEADLINE);
-            else market.betNo(ROUND, TIER_MID, amount, 0, NO_DEADLINE);
-            expectedFees += amount * uint256(TIER_MID) / BPS;
-        }
-        assertEq(_feeReserve(ROUND, TIER_MID), expectedFees, "fee escrow mismatch");
-
-        (, uint256 adaPending) = market.lpPositionOf(ROUND, TIER_MID, lpAda);
-        (, uint256 benPending) = market.lpPositionOf(ROUND, TIER_MID, lpBen);
-        assertLe(adaPending + benPending, expectedFees, "LPs owed more than escrowed");
-
-        vm.prank(lpAda);
-        uint256 adaGot = market.claimFees(ROUND, TIER_MID);
-        vm.prank(lpBen);
-        uint256 benGot = market.claimFees(ROUND, TIER_MID);
-        assertEq(adaGot, adaPending);
-        assertEq(benGot, benPending);
-        // Residual = dead-share cut + per-bet accumulator rounding: dust only.
-        assertEq(_feeReserve(ROUND, TIER_MID), expectedFees - adaGot - benGot, "escrow accounting broken");
-        assertLt(_feeReserve(ROUND, TIER_MID), 1e6, "excess fee dust");
-    }
-
-    /// Fees are proportional to shares: an LP with twice the shares accrues
-    /// twice the fees from the same bets (exact up to 1 wei per bet).
-    function testFuzz_feesProRataToShares(uint256 amount) public {
-        amount = bound(amount, 1e6, 200_000e18);
-        _seedPool(TIER_LOW, LIQ); // Ada: LIQ - dead
-        vm.prank(lpBen);
-        market.addLiquidity(ROUND, TIER_LOW, LIQ / 2, 0, 0, NO_DEADLINE); // Ben: LIQ/2
-
-        vm.prank(alice);
-        market.betYes(ROUND, TIER_LOW, amount, 0, NO_DEADLINE);
-
-        (uint256 adaShares, uint256 adaPending) = market.lpPositionOf(ROUND, TIER_LOW, lpAda);
-        (uint256 benShares, uint256 benPending) = market.lpPositionOf(ROUND, TIER_LOW, lpBen);
-        // adaPending/adaShares == benPending/benShares within rounding.
-        assertApproxEqAbs(
-            adaPending * 1e18 / adaShares, benPending * 1e18 / benShares, 1e6, "per-share fee rate differs between LPs"
-        );
     }
 
     // ------------------------------------------------------------------
@@ -396,7 +421,7 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         threshold = bound(threshold, 0, 1e30);
         finalCount = bound(finalCount, 0, 1e30);
         game.setNumBids(ROUND - 1, threshold);
-        _seedPool(TIER_LOW, LIQ);
+        _seedPool(LIQ);
 
         if (early) {
             game.setNumBids(ROUND, finalCount); // round stays live
@@ -420,19 +445,19 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
     /// Once the live count crosses the threshold, every bet and liquidity add
     /// reverts — there is no block in which a decided outcome can be traded.
     function testFuzz_noTradingOnDecidedOutcome(uint256 count) public {
-        _seedPool(TIER_LOW, LIQ);
+        _seedPool(LIQ);
         count = bound(count, THRESHOLD + 1, 1e30);
         game.setNumBids(ROUND, count);
 
         vm.startPrank(alice);
         vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
-        market.betYes(ROUND, TIER_LOW, 1e18, 0, NO_DEADLINE);
+        market.betYes(ROUND, 1e18, 0, NO_DEADLINE);
         vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
-        market.betNoBest(ROUND, 1e18, 0, NO_DEADLINE);
+        market.betNo(ROUND, 1e18, 0, NO_DEADLINE);
         vm.stopPrank();
         vm.prank(lpBen);
         vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
-        market.addLiquidity(ROUND, TIER_LOW, 1e18, 0, 0, NO_DEADLINE);
+        market.addLiquidity(ROUND, 1e18, FEE, 0, 0, NO_DEADLINE);
     }
 
     /// Winning tokens always pay exactly 1 CST each, losing exactly 0, no
@@ -443,11 +468,11 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         a = bound(a, 1, 300_000e18);
         b = bound(b, 1, 300_000e18);
         mintAmt = bound(mintAmt, 1, 100_000e18);
-        _seedPool(TIER_MID, LIQ);
+        _seedPool(LIQ);
 
         vm.startPrank(alice);
-        market.betYes(ROUND, TIER_MID, a, 0, NO_DEADLINE);
-        market.betNo(ROUND, TIER_MID, b, 0, NO_DEADLINE);
+        market.betYes(ROUND, a, 0, NO_DEADLINE);
+        market.betNo(ROUND, b, 0, NO_DEADLINE);
         market.mintSets(ROUND, mintAmt);
         vm.stopPrank();
 
@@ -460,29 +485,39 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         assertEq(payout, yesWins ? yes : no, "payout must be exactly the winning balance");
     }
 
-    /// The flagship property: for any mix of LPs (all tiers), bettors, set
-    /// minters and any outcome, everyone can always exit in full and the
-    /// contract retains only dead-share reserves plus rounding dust.
+    /// The flagship property: for any mix of LPs (with any fee votes and a
+    /// mid-life re-vote), bettors, set minters and any outcome, everyone can
+    /// always exit in full and the contract retains only dead-share reserves
+    /// plus fee-rounding dust — exactly.
     function testFuzz_lifecycleConservation(
-        uint256[3] memory lpAmounts,
+        uint256[2] memory lpAmounts,
+        uint256[2] memory lpVotes,
         uint256[3] memory betAmounts,
         uint8 dirMask,
         uint256 mintAmount,
-        uint256 finalCount
+        uint256 finalCount,
+        uint256 revote
     ) public {
-        uint16[3] memory tiers = [TIER_LOW, TIER_MID, TIER_HIGH];
+        address[2] memory lps = [lpAda, lpBen];
         address[3] memory bettors = [alice, bob, carol];
 
+        _seedPoolWith(lpAda, bound(lpAmounts[0], 1e15, 300_000e18), uint16(bound(lpVotes[0], 0, MAX_FEE_BPS)), 5_000);
+        vm.prank(lpBen);
+        try market.addLiquidity(
+            ROUND, bound(lpAmounts[1], 1e15, 300_000e18), uint16(bound(lpVotes[1], 0, MAX_FEE_BPS)), 0, 0, NO_DEADLINE
+        ) {}
+            catch {}
+
         for (uint256 i = 0; i < 3; i++) {
-            uint256 liq = bound(lpAmounts[i], 1e15, 300_000e18);
-            vm.prank(i % 2 == 0 ? lpAda : lpBen);
-            market.addLiquidity(ROUND, tiers[i], liq, 5_000, 0, NO_DEADLINE);
-        }
-        for (uint256 i = 0; i < 3; i++) {
+            if (i == 1) {
+                // A mid-life re-vote changes the fee for later bets.
+                vm.prank(lpAda);
+                market.updateFeeDeclaration(ROUND, uint16(bound(revote, 0, MAX_FEE_BPS)));
+            }
             uint256 amount = bound(betAmounts[i], 1, 300_000e18);
             vm.prank(bettors[i]);
-            if ((dirMask >> i) & 1 == 1) market.betYesBest(ROUND, amount, 0, NO_DEADLINE);
-            else market.betNo(ROUND, tiers[i], amount, 0, NO_DEADLINE);
+            if ((dirMask >> i) & 1 == 1) market.betYes(ROUND, amount, 0, NO_DEADLINE);
+            else market.betNo(ROUND, amount, 0, NO_DEADLINE);
         }
         mintAmount = bound(mintAmount, 2, 100_000e18);
         vm.startPrank(carol);
@@ -494,18 +529,18 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         market.resolve(ROUND);
 
         // Everyone exits everything they possibly can.
-        address[5] memory everyone = [lpAda, lpBen, alice, bob, carol];
         uint256 contractHas = cst.balanceOf(address(market));
         uint256 paidOut;
-        for (uint256 i = 0; i < everyone.length; i++) {
-            for (uint256 t = 0; t < 3; t++) {
-                (uint256 shares,) = market.lpPositionOf(ROUND, tiers[t], everyone[i]);
-                if (shares > 0) {
-                    vm.prank(everyone[i]);
-                    (,, uint256 fees) = market.removeLiquidity(ROUND, tiers[t], shares, 0, 0, NO_DEADLINE);
-                    paidOut += fees;
-                }
+        for (uint256 i = 0; i < 2; i++) {
+            uint256 shares = _lpShares(ROUND, lps[i]);
+            if (shares > 0) {
+                vm.prank(lps[i]);
+                (,, uint256 fees) = market.removeLiquidity(ROUND, shares, 0, 0, NO_DEADLINE);
+                paidOut += fees;
             }
+        }
+        address[5] memory everyone = [lpAda, lpBen, alice, bob, carol];
+        for (uint256 i = 0; i < everyone.length; i++) {
             vm.prank(everyone[i]);
             paidOut += market.claim(ROUND);
         }
@@ -515,36 +550,34 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         // Exact conservation: what remains is precisely the CST backing the
         // winning-side tokens still locked under the dead shares, plus the
         // unclaimable fee-rounding escrow. Not one wei more or less.
-        (,, bool yesWon,,,,) = market.roundState(ROUND);
-        uint256 expectedRetained;
-        for (uint256 t = 0; t < 3; t++) {
-            (uint256 rYl, uint256 rNl, uint256 sharesLeft,, uint256 feeLeft) = market.pool(ROUND, tiers[t]);
-            assertEq(sharesLeft, DEAD_SHARES, "only dead shares may remain");
-            expectedRetained += feeLeft + (yesWon ? rYl : rNl);
-        }
-        assertEq(cst.balanceOf(address(market)), expectedRetained, "retained CST diverged from liabilities");
+        (, bool resolvedFlag, bool yesWon,,,,) = market.roundState(ROUND);
+        assertTrue(resolvedFlag);
+        (uint256 rYl, uint256 rNl, uint256 sharesLeft,, uint256 feeLeft,,) = market.pool(ROUND);
+        assertEq(sharesLeft, DEAD_SHARES, "only dead shares may remain");
+        assertEq(
+            cst.balanceOf(address(market)), feeLeft + (yesWon ? rYl : rNl), "retained CST diverged from liabilities"
+        );
     }
 
-    /// Post-resolution solvency for any partial-exit order: whoever claims,
-    /// in whatever order, the contract can always pay (no revert, balances
-    /// never go negative). Exercised by claiming in fuzzed order.
+    /// Post-resolution solvency for any claim order: whoever claims, in
+    /// whatever order, the contract can always pay.
     function testFuzz_claimOrderIndependence(uint256 orderSeed, uint256 betA, uint256 betB, bool yesWins) public {
         betA = bound(betA, 1, 200_000e18);
         betB = bound(betB, 1, 200_000e18);
-        _seedPool(TIER_LOW, LIQ);
+        _seedPool(LIQ);
         vm.prank(alice);
-        market.betYes(ROUND, TIER_LOW, betA, 0, NO_DEADLINE);
+        market.betYes(ROUND, betA, 0, NO_DEADLINE);
         vm.prank(bob);
-        market.betNo(ROUND, TIER_LOW, betB, 0, NO_DEADLINE);
+        market.betNo(ROUND, betB, 0, NO_DEADLINE);
 
         _endRoundWith(yesWins ? THRESHOLD + 7 : THRESHOLD);
         market.resolve(ROUND);
 
-        address[3] memory order;
-        // Three claimants in a fuzzed order (lpAda exits liquidity first).
-        (uint256 adaShares,) = market.lpPositionOf(ROUND, TIER_LOW, lpAda);
+        uint256 adaShares = _lpShares(ROUND, lpAda);
         vm.prank(lpAda);
-        market.removeLiquidity(ROUND, TIER_LOW, adaShares, 0, 0, NO_DEADLINE);
+        market.removeLiquidity(ROUND, adaShares, 0, 0, NO_DEADLINE);
+
+        address[3] memory order;
         if (orderSeed % 3 == 0) order = [alice, bob, lpAda];
         else if (orderSeed % 3 == 1) order = [bob, lpAda, alice];
         else order = [lpAda, alice, bob];
@@ -554,19 +587,6 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
             market.claim(ROUND); // must never revert for lack of funds
         }
         vm.prank(lpAda);
-        market.claimFees(ROUND, TIER_LOW);
-    }
-
-    // ------------------------------------------------------------------
-    // Helpers
-    // ------------------------------------------------------------------
-
-    function _tierAt(uint256 seed) internal pure returns (uint16) {
-        uint16[3] memory tiers = [TIER_LOW, TIER_MID, TIER_HIGH];
-        return tiers[seed % 3];
-    }
-
-    function _ceilDivHelper(uint256 a, uint256 b) internal pure returns (uint256) {
-        return (a + b - 1) / b;
+        market.claimFees(ROUND);
     }
 }

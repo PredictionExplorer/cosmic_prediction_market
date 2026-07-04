@@ -16,19 +16,15 @@ function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
     threshold: 800n,
     currentCount: 500n,
     gameRoundNum: 5n,
-    pools: [
-      {
-        feeBps: 100,
-        // NO-heavy pool: P(YES) = 3000/(1000+3000) = 75%.
-        pool: {
-          reserveYes: 1_000n * ONE,
-          reserveNo: 3_000n * ONE,
-          totalShares: 1_000n * ONE,
-          accFeePerShare: 0n,
-          feeReserve: 0n,
-        },
-      },
-    ],
+    pool: {
+      // NO-heavy pool: P(YES) = 3000/(1000+3000) = 75%.
+      reserveYes: 1_000n * ONE,
+      reserveNo: 3_000n * ONE,
+      totalShares: 1_000n * ONE,
+      accFeePerShare: 0n,
+      feeReserve: 0n,
+      feeWeight: 1_000n * ONE * 200n,
+    },
     cstAddress: "0x2222222222222222222222222222222222222222",
     gameAddress: "0x3333333333333333333333333333333333333333",
     ...overrides,
@@ -44,7 +40,7 @@ describe("MarketHero", () => {
   });
 
   it("shows a dash and guidance when nothing is funded yet", () => {
-    render(<MarketHero snapshot={snapshot({ pools: [], initialized: false })} history={[]} />);
+    render(<MarketHero snapshot={snapshot({ pool: { reserveYes: 0n, reserveNo: 0n, totalShares: 0n, accFeePerShare: 0n, feeReserve: 0n, feeWeight: 0n }, initialized: false })} history={[]} />);
     expect(screen.getByTestId("hero-no-liquidity")).toBeInTheDocument();
     expect(screen.getByTestId("phase-badge")).toHaveTextContent(/awaiting first liquidity/i);
   });

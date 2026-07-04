@@ -12,12 +12,13 @@ import type { BetSide } from "@/lib/math";
 
 /** Any round event, normalized for the activity feed. */
 export interface ActivityEvent {
-  readonly kind: "bet" | "add" | "remove" | "feesClaimed" | "mint" | "redeem" | "resolved" | "claimed";
+  readonly kind: "bet" | "add" | "remove" | "feeVote" | "feesClaimed" | "mint" | "redeem" | "resolved" | "claimed";
   readonly blockNumber: bigint;
   readonly logIndex: number;
   readonly transactionHash: `0x${string}`;
   readonly user: `0x${string}` | null;
   readonly side: BetSide | null;
+  /** For adds and fee votes: the declared fee (bps). */
   readonly feeBps: number | null;
   /** Primary CST-denominated amount (bet in, liquidity in/out, claim out…). */
   readonly amount: bigint;
@@ -61,7 +62,6 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
           kind: "bet",
           user: log.args.user,
           side,
-          feeBps: log.args.feeBps,
           amount: log.args.cstIn,
           secondary: log.args.tokensOut,
         });
@@ -71,7 +71,6 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
           logIndex: base.logIndex,
           transactionHash: base.transactionHash,
           user: log.args.user,
-          feeBps: log.args.feeBps,
           side,
           cstIn: log.args.cstIn,
           netIn: log.args.netIn,
@@ -85,7 +84,7 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
           ...base,
           kind: "add",
           user: log.args.provider,
-          feeBps: log.args.feeBps,
+          feeBps: log.args.declaredFeeBps,
           amount: log.args.cstIn,
           secondary: log.args.sharesOut,
         });
@@ -95,8 +94,8 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
           logIndex: base.logIndex,
           transactionHash: base.transactionHash,
           provider: log.args.provider,
-          feeBps: log.args.feeBps,
           cstIn: log.args.cstIn,
+          declaredFeeBps: log.args.declaredFeeBps,
           sharesOut: log.args.sharesOut,
           yesToPool: log.args.yesToPool,
           noToPool: log.args.noToPool,
@@ -108,7 +107,6 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
           ...base,
           kind: "remove",
           user: log.args.provider,
-          feeBps: log.args.feeBps,
           amount: log.args.yesOut > log.args.noOut ? log.args.yesOut : log.args.noOut,
           secondary: log.args.sharesIn,
         });
@@ -118,12 +116,21 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
           logIndex: base.logIndex,
           transactionHash: base.transactionHash,
           provider: log.args.provider,
-          feeBps: log.args.feeBps,
           sharesIn: log.args.sharesIn,
           yesOut: log.args.yesOut,
           noOut: log.args.noOut,
           feesOut: log.args.feesOut,
           timestamp: null,
+        });
+        break;
+      case "FeeDeclarationUpdated":
+        activity.push({
+          ...base,
+          kind: "feeVote",
+          user: log.args.provider,
+          feeBps: log.args.newFeeBps,
+          amount: 0n,
+          secondary: BigInt(log.args.oldFeeBps),
         });
         break;
       case "FeesClaimed":
@@ -132,7 +139,6 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
             ...base,
             kind: "feesClaimed",
             user: log.args.user,
-            feeBps: log.args.feeBps,
             amount: log.args.amount,
             secondary: 0n,
           });

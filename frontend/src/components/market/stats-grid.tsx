@@ -1,10 +1,11 @@
 "use client";
 
-import { Activity, Coins, Droplets, Layers, Target, TrendingUp } from "lucide-react";
+import { Activity, Coins, Droplets, Percent, Target, TrendingUp } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatBps, formatCount, formatCst } from "@/lib/format";
 import type { RoundSnapshot } from "@/lib/market";
-import { totalFeeReserve, totalLiquidity } from "@/lib/market";
+import { totalLiquidity } from "@/lib/market";
+import { currentFeeBps } from "@/lib/math";
 import { Card } from "@/components/ui/card";
 
 interface StatsGridProps {
@@ -22,7 +23,7 @@ interface Stat {
 
 /** The round's vital signs at a glance. */
 export function StatsGrid({ snapshot, volume }: StatsGridProps) {
-  const fundedTiers = snapshot.pools.filter((p) => p.pool.totalShares > 0n);
+  const funded = snapshot.pool.totalShares > 0n;
   const stats: Stat[] = [
     {
       icon: <Activity className="size-4" aria-hidden />,
@@ -46,22 +47,19 @@ export function StatsGrid({ snapshot, volume }: StatsGridProps) {
     {
       icon: <Droplets className="size-4" aria-hidden />,
       label: "Liquidity",
-      value: formatCst(totalLiquidity(snapshot.pools)),
-      hint: "outcome tokens across all fee-tier pools",
+      value: formatCst(totalLiquidity(snapshot.pool)),
+      hint: "outcome tokens in the pool",
     },
     {
-      icon: <Layers className="size-4" aria-hidden />,
-      label: "Active tiers",
-      value:
-        fundedTiers.length === 0
-          ? "none"
-          : fundedTiers.map((p) => formatBps(BigInt(p.feeBps))).join(" · "),
-      hint: "fee tiers with liquidity — LPs choose their own fee",
+      icon: <Percent className="size-4" aria-hidden />,
+      label: "Pool fee",
+      value: funded ? formatBps(currentFeeBps(snapshot.pool)) : "—",
+      hint: "the share-weighted average of all LPs' fee votes",
     },
     {
       icon: <Coins className="size-4" aria-hidden />,
       label: "LP fees unclaimed",
-      value: formatCst(totalFeeReserve(snapshot.pools)),
+      value: formatCst(snapshot.pool.feeReserve),
       unit: "CST",
       hint: "earned by liquidity providers, claimable anytime",
     },
