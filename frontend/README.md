@@ -135,7 +135,13 @@ history).
 
 1. Import the repository in Vercel and set **Root Directory** to `frontend`
    (framework preset: Next.js — auto-detected).
-2. Add the `NEXT_PUBLIC_*` environment variables above.
+2. The chain id, market address and deploy block ship with the repo in
+   [`.env.production`](.env.production) (public on-chain facts; a push
+   rebuilds the site pointing at the committed contract). In the Vercel
+   dashboard add only the two service variables:
+   `NEXT_PUBLIC_RPC_URL` (dedicated Arbitrum RPC — the public fallback is
+   rate-limited) and `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` (optional, for
+   mobile wallets). Dashboard values override the file.
 3. Ship. There is nothing to update per round, ever.
 
 ## Testing philosophy
