@@ -50,8 +50,9 @@ contract ForkTest is Test {
         }
 
         market.addLiquidity(round, 1_000e18, 200, 5_000, 0, type(uint256).max);
-        (bool initialized,,, uint256 storedThreshold,,,) = market.roundState(round);
+        (bool initialized, bool thresholdKnown,,, uint256 storedThreshold,,,) = market.roundState(round);
         assertTrue(initialized);
+        assertTrue(thresholdKnown, "current-round threshold locks at init");
         assertEq(storedThreshold, threshold, "threshold read from the live game");
         assertEq(market.currentFeeBps(round), 200, "sole LP's declaration is the fee");
 
@@ -59,5 +60,15 @@ contract ForkTest is Test {
         uint256 out = market.betYes(round, 100e18, quoted, type(uint256).max);
         assertEq(out, quoted, "fork bet must match its quote");
         assertGt(out, 0);
+
+        // Future rounds are open for business against the LIVE game too.
+        uint256 future = round + 1;
+        market.addLiquidity(future, 500e18, 200, 5_000, 0, type(uint256).max);
+        (, bool futureKnown,,,,,,) = market.roundState(future);
+        assertFalse(futureKnown, "a future round has no threshold yet");
+        uint256 futureOut = market.betYes(future, 50e18, 0, type(uint256).max);
+        assertGt(futureOut, 0, "future-round bet fills");
+        vm.expectRevert(GestureSeriesMarket.NotResolvable.selector);
+        market.resolve(future);
     }
 }

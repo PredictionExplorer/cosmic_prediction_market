@@ -18,10 +18,17 @@ interface IERC20 {
 ///
 /// Mechanism, in short:
 ///
-/// - Markets launch themselves: the first `addLiquidity` for the current round
-///   initializes that round's market, reading the threshold (the previous
-///   round's final gesture count, frozen the moment this round started) from
-///   the game. Nothing needs to be deployed or configured per round.
+/// - Markets launch themselves: the first `addLiquidity` for the current
+///   round — or ANY future round — initializes that round's market. Nothing
+///   needs to be deployed or configured per round.
+///
+/// - The threshold (the previous round's final gesture count) is locked
+///   lazily: it does not exist yet while a round is still in the future, and
+///   is snapshotted from the game by the first `addLiquidity`, bet or
+///   `resolve` that touches the round once the game has reached it. The value
+///   is already public and final before any lock can happen, so lock timing
+///   is not a degree of freedom anyone can exploit. Rounds strictly in the
+///   past can never be initialized or traded — only exited.
 ///
 /// - Each round has two outcome tokens, YES and NO, tracked as internal
 ///   balances. 1 CST mints a complete set of 1 YES + 1 NO, and a complete set
@@ -52,6 +59,14 @@ interface IERC20 {
 ///   exceeds the threshold the outcome is decided: betting and adding
 ///   liquidity halt atomically and anyone may `resolve` the round early for
 ///   YES. Otherwise the round resolves when the game's round counter advances.
+///   While a round is still in the future nothing is ever provably certain
+///   (its own count is zero and the threshold is unknown), so future-round
+///   trading never halts and future rounds are never resolvable.
+///
+/// - When the game's round counter passes a round, that round's market
+///   freezes: betting, adding liquidity and minting sets all revert, while
+///   every exit — `removeLiquidity`, `claimFees`, `redeemSets` (until
+///   resolution) and `claim` (after it) — keeps working forever.
 ///
 /// - After resolution, `claim` pays winning tokens 1:1. LP positions are never
 ///   confiscated or swept: `removeLiquidity` and `claimFees` work at any time,
@@ -70,6 +85,13 @@ interface IERC20 {
 /// - All state-mutating functions are non-reentrant and follow
 ///   checks-effects-interactions; rounding always favors the contract, so it
 ///   can never owe more CST than it holds.
+/// - An LP pulling the pool right after your bet fills cannot touch you:
+///   your fill already beat your `minTokensOut` floor, every outstanding set
+///   stays backed 1:1 by CST held here, and your exits (hold to resolution,
+///   or buy the opposite side — bets always return at least their net input
+///   in tokens — and `redeemSets`) never close. Liquidity DEPTH, however, is
+///   never guaranteed; size positions accordingly, especially in far-future
+///   rounds where resolution may be a long way off.
 contract GestureSeriesMarket {
     uint256 internal constant ONE = 1e18;
     uint256 internal constant BPS = 10_000;
@@ -111,10 +133,15 @@ contract GestureSeriesMarket {
 
     struct RoundMarket {
         bool initialized;
+        /// @dev True once `threshold` has been snapshotted from the game.
+        /// False while the round is still in the future (the previous round
+        /// hasn't finished, so its final count doesn't exist yet).
+        bool thresholdSet;
         bool resolved;
         bool yesWon;
         /// @dev Final gesture count of the previous round; YES wins iff this
-        /// round's final count is strictly greater.
+        /// round's final count is strictly greater. Meaningless until
+        /// `thresholdSet`.
         uint256 threshold;
         Pool pool;
         mapping(address => uint256) yesBalance;
@@ -125,7 +152,8 @@ contract GestureSeriesMarket {
 
     uint256 private _lock = 1;
 
-    event RoundInitialized(uint256 indexed roundId, uint256 threshold);
+    event RoundInitialized(uint256 indexed roundId);
+    event ThresholdLocked(uint256 indexed roundId, uint256 threshold);
     event SetsMinted(uint256 indexed roundId, address indexed user, uint256 amount);
     event SetsRedeemed(uint256 indexed roundId, address indexed user, uint256 amount);
     event Bet(uint256 indexed roundId, address indexed user, bool yes, uint256 cstIn, uint256 netIn, uint256 tokensOut);
@@ -190,11 +218,13 @@ contract GestureSeriesMarket {
     /// pool charges the share-weighted average of all LPs' declarations, and
     /// this call re-declares YOUR ENTIRE position at `declaredFeeBps`.
     ///
-    /// The first deposit for the current round initializes the round's market
-    /// (reading the threshold from the game), and the first deposit into the
-    /// pool opens it at `initialYesProbBps` (ignored afterwards; later
-    /// deposits join at the pool's current ratio, with any excess outcome
-    /// tokens credited back to your balances).
+    /// Works for the current round and ANY future round (never past rounds):
+    /// the first deposit for a round initializes its market, and the first
+    /// deposit into the pool opens it at `initialYesProbBps` (ignored
+    /// afterwards; later deposits join at the pool's current ratio, with any
+    /// excess outcome tokens credited back to your balances). Providing
+    /// across the threshold reveal (the moment the previous round ends) is an
+    /// informed-flow risk LPs opt into, priced via their fee vote.
     /// @param minSharesOut Slippage guard on the LP shares received.
     /// @param deadline Unix timestamp after which the transaction reverts.
     function addLiquidity(
@@ -209,15 +239,17 @@ contract GestureSeriesMarket {
         if (cstIn == 0 || declaredFeeBps > MAX_FEE_BPS) revert InvalidParams();
 
         RoundMarket storage rm = _rounds[roundId];
+        uint256 currentRound = game.roundNum();
         if (!rm.initialized) {
-            _initRound(rm, roundId);
-        } else if (game.roundNum() != roundId) {
+            _initRound(rm, roundId, currentRound);
+        } else if (roundId < currentRound) {
             revert RoundNotActive();
         }
+        _syncThreshold(rm, roundId, currentRound);
         if (rm.resolved) revert AlreadyResolved();
         // Once the outcome is certain, adding liquidity would only donate to
         // arbitrageurs; block it in the same breath as betting.
-        if (game.bidderAddresses(roundId) > rm.threshold) revert OutcomeDecided();
+        if (_outcomeDecided(rm, roundId)) revert OutcomeDecided();
 
         _pullCst(msg.sender, cstIn);
         Pool storage p = rm.pool;
@@ -298,12 +330,14 @@ contract GestureSeriesMarket {
 
     /// @notice Deposit CST and receive YES and NO in equal amounts
     /// (1 CST = 1 YES + 1 NO). Requires the round's market to exist and the
-    /// round to still be live.
+    /// round to be current or future — a set is value-neutral (it always
+    /// redeems or claims for exactly 1 CST), so minting stays open even once
+    /// the outcome is decided, and only closes when the round is over.
     function mintSets(uint256 roundId, uint256 amount) external nonReentrant {
         RoundMarket storage rm = _rounds[roundId];
         if (!rm.initialized) revert RoundNotInitialized();
         if (rm.resolved) revert AlreadyResolved();
-        if (game.roundNum() != roundId) revert RoundNotActive();
+        if (roundId < game.roundNum()) revert RoundNotActive();
         if (amount == 0) revert InvalidParams();
         _pullCst(msg.sender, amount);
         rm.yesBalance[msg.sender] += amount;
@@ -332,8 +366,9 @@ contract GestureSeriesMarket {
     // ---------------------------------------------------------------------
 
     /// @notice Bet `cstIn` CST on YES ("this round beats the last one"). You
-    /// receive YES tokens. The fee charged is the pool's current
-    /// share-weighted average (`currentFeeBps`).
+    /// receive YES tokens. Works for the current round and any future round.
+    /// The fee charged is the pool's current share-weighted average
+    /// (`currentFeeBps`).
     /// @param minTokensOut Slippage guard; reverts if the bet would yield
     /// fewer tokens (your protection against liquidity pulls, sandwiches AND
     /// fee-vote jumps alike).
@@ -343,7 +378,7 @@ contract GestureSeriesMarket {
         returns (uint256 tokensOut)
     {
         _checkDeadline(deadline);
-        RoundMarket storage rm = _tradableRound(roundId);
+        RoundMarket storage rm = _prepareTradableRound(roundId);
         tokensOut = _bet(rm, roundId, true, cstIn, minTokensOut);
     }
 
@@ -355,7 +390,7 @@ contract GestureSeriesMarket {
         returns (uint256 tokensOut)
     {
         _checkDeadline(deadline);
-        RoundMarket storage rm = _tradableRound(roundId);
+        RoundMarket storage rm = _prepareTradableRound(roundId);
         tokensOut = _bet(rm, roundId, false, cstIn, minTokensOut);
     }
 
@@ -366,15 +401,22 @@ contract GestureSeriesMarket {
     /// @notice Resolve round `roundId`. Callable by anyone once the round is
     /// over (the game's round counter advanced), or EARLY the moment the live
     /// count exceeds the threshold — the count only ever increases, so YES is
-    /// already certain then.
+    /// already certain then. Future rounds are never resolvable: nothing
+    /// about them is certain before they start. Works no matter how long ago
+    /// the round ended (the threshold is locked here if nobody ever touched
+    /// the round while it was current — the game value is final either way).
     function resolve(uint256 roundId) external nonReentrant {
         RoundMarket storage rm = _rounds[roundId];
         if (!rm.initialized) revert RoundNotInitialized();
         if (rm.resolved) revert AlreadyResolved();
 
+        uint256 currentRound = game.roundNum();
+        if (currentRound < roundId) revert NotResolvable();
+        _syncThreshold(rm, roundId, currentRound);
+
         uint256 count = game.bidderAddresses(roundId);
         bool yesWon_;
-        if (game.roundNum() > roundId) {
+        if (currentRound > roundId) {
             yesWon_ = count > rm.threshold; // strict: a tie means NO wins
         } else if (count > rm.threshold) {
             yesWon_ = true; // early resolution: outcome already certain
@@ -403,11 +445,23 @@ contract GestureSeriesMarket {
     // ---------------------------------------------------------------------
 
     /// @notice Full lifecycle state of a round's market in one call.
+    /// @return initialized Whether the round's market exists.
+    /// @return thresholdKnown Whether the threshold is knowable: either
+    /// already locked in storage, or final in the game and about to be locked
+    /// by the next touch (in which case `threshold` reports that live value).
+    /// False while the round is still in the future.
+    /// @return resolved Whether the round has been resolved.
+    /// @return yesWon The resolved outcome (meaningless until `resolved`).
+    /// @return threshold The effective threshold (0 while unknowable).
+    /// @return currentCount The round's live gesture count.
+    /// @return roundActive Whether this is the game's current round.
+    /// @return outcomeDecided Whether YES is already provably certain.
     function roundState(uint256 roundId)
         external
         view
         returns (
             bool initialized,
+            bool thresholdKnown,
             bool resolved,
             bool yesWon,
             uint256 threshold,
@@ -420,10 +474,12 @@ contract GestureSeriesMarket {
         initialized = rm.initialized;
         resolved = rm.resolved;
         yesWon = rm.yesWon;
-        threshold = rm.threshold;
+        uint256 currentRound = game.roundNum();
+        thresholdKnown = rm.thresholdSet || (roundId != 0 && currentRound >= roundId);
+        threshold = rm.thresholdSet ? rm.threshold : (thresholdKnown ? game.bidderAddresses(roundId - 1) : 0);
         currentCount = game.bidderAddresses(roundId);
-        roundActive = game.roundNum() == roundId;
-        outcomeDecided = initialized && currentCount > threshold;
+        roundActive = currentRound == roundId;
+        outcomeDecided = thresholdKnown && currentCount > threshold;
     }
 
     /// @notice Reserves, share/fee accounting, and the live fee of a round's pool.
@@ -482,14 +538,39 @@ contract GestureSeriesMarket {
     // Internals
     // ---------------------------------------------------------------------
 
-    /// @dev Initializes the market for `roundId`. Only the CURRENT round can be
-    /// initialized (so the threshold — the previous round's count — is final),
-    /// and round 0 has no previous round to compare against.
-    function _initRound(RoundMarket storage rm, uint256 roundId) internal {
-        if (roundId == 0 || game.roundNum() != roundId) revert RoundNotActive();
+    /// @dev Initializes the market for `roundId`: the current round or any
+    /// future round. Past rounds can never be initialized (their outcome is
+    /// public), and round 0 has no previous round to compare against. The
+    /// threshold is NOT read here — it may not exist yet; `_syncThreshold`
+    /// locks it as soon as it is final.
+    function _initRound(RoundMarket storage rm, uint256 roundId, uint256 currentRound) internal {
+        if (roundId == 0 || roundId < currentRound) revert RoundNotActive();
         rm.initialized = true;
-        rm.threshold = game.bidderAddresses(roundId - 1);
-        emit RoundInitialized(roundId, rm.threshold);
+        emit RoundInitialized(roundId);
+    }
+
+    /// @dev Locks the threshold — the previous round's final gesture count —
+    /// the first time the round is touched once the game has reached it.
+    /// `bidderAddresses(roundId - 1)` is immutable from that moment on, so
+    /// the locked value is identical no matter when the lock happens; the
+    /// snapshot exists so decided-checks and resolution stay internally
+    /// consistent forever after. Ran (idempotently) by every threshold-
+    /// dependent entry point: `addLiquidity`, both bets, and `resolve`.
+    function _syncThreshold(RoundMarket storage rm, uint256 roundId, uint256 currentRound) internal {
+        if (!rm.thresholdSet && currentRound >= roundId) {
+            uint256 t = game.bidderAddresses(roundId - 1);
+            rm.threshold = t;
+            rm.thresholdSet = true;
+            emit ThresholdLocked(roundId, t);
+        }
+    }
+
+    /// @dev YES is provably certain: the live count exceeds the locked
+    /// threshold. Never true while the round is still in the future — its
+    /// count is zero and the threshold doesn't exist yet, so nothing can be
+    /// certain and future-round trading never halts.
+    function _outcomeDecided(RoundMarket storage rm, uint256 roundId) internal view returns (bool) {
+        return rm.thresholdSet && game.bidderAddresses(roundId) > rm.threshold;
     }
 
     /// @dev First deposit into the pool: seeds reserves at the LP's chosen YES
@@ -607,17 +688,20 @@ contract GestureSeriesMarket {
         emit Bet(roundId, msg.sender, yes, cstIn, net, tokensOut);
     }
 
-    /// @dev The round must be initialized, unresolved, still the game's
-    /// current round, AND the outcome must still be genuinely uncertain.
-    /// The last check closes the window between the count crossing the
-    /// threshold and someone calling `resolve`: there is never a block in
-    /// which a decided outcome can be traded.
-    function _tradableRound(uint256 roundId) internal view returns (RoundMarket storage rm) {
+    /// @dev The round must be initialized, unresolved, current or future,
+    /// AND the outcome must still be genuinely uncertain. The threshold is
+    /// synced in the same call, so at the exact block the game reaches the
+    /// round the just-locked value is already enforced; together with the
+    /// decided-check this means there is never a block in which a decided
+    /// outcome (or a stale/unset threshold) can be traded.
+    function _prepareTradableRound(uint256 roundId) internal returns (RoundMarket storage rm) {
         rm = _rounds[roundId];
         if (!rm.initialized) revert RoundNotInitialized();
         if (rm.resolved) revert AlreadyResolved();
-        if (game.roundNum() != roundId) revert RoundNotActive();
-        if (game.bidderAddresses(roundId) > rm.threshold) revert OutcomeDecided();
+        uint256 currentRound = game.roundNum();
+        if (roundId < currentRound) revert RoundNotActive();
+        _syncThreshold(rm, roundId, currentRound);
+        if (_outcomeDecided(rm, roundId)) revert OutcomeDecided();
     }
 
     /// @dev The share-weighted average fee; 0 for an unopened pool. Bounded

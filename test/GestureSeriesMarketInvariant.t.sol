@@ -9,12 +9,20 @@ import {SeriesTestBase} from "./utils/SeriesTestBase.sol";
 import {MockCst, MockGame} from "./utils/Mocks.sol";
 
 /// @notice Fuzzed actor that drives the series market through arbitrary
-/// interleavings of the full multi-round lifecycle: liquidity in and out,
-/// fee re-votes, bets, set minting/redeeming, gesture-count bumps (including
-/// threshold crossings), round advancement, early and normal resolution, and
-/// claims. Every input is bounded so no call ever reverts — the suite runs
-/// with `fail_on_revert = true`, meaning ANY unexpected revert fails the run.
+/// interleavings of the full multi-round lifecycle: liquidity in and out
+/// (current AND future rounds), fee re-votes, bets, set minting/redeeming,
+/// gesture-count bumps (including threshold crossings), round advancement
+/// (turning future rounds current and current rounds past), early and normal
+/// resolution, and claims. Every input is bounded so no call ever reverts —
+/// the suite runs with `fail_on_revert = true`, meaning ANY unexpected revert
+/// fails the run. After every action the handler self-checks two lifecycle
+/// laws: a threshold never changes once knowable, and a past round's pool,
+/// fee escrow and outstanding supply only ever shrink.
 contract SeriesHandler is CommonBase, StdCheats, StdUtils {
+    /// @dev How many rounds ahead of the current one the handler will fund
+    /// and trade (0 = current, up to current + FUTURE_HORIZON).
+    uint256 internal constant FUTURE_HORIZON = 2;
+
     GestureSeriesMarket public immutable market;
     MockCst public immutable cst;
     MockGame public immutable game;
@@ -25,6 +33,25 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
     /// Ghost accounting: every wei of CST that ever entered or left the market.
     uint256 public ghost_cstIn;
     uint256 public ghost_cstOut;
+
+    /// Ghost threshold ledger: the first value observed once a round's
+    /// threshold becomes knowable; it must never change afterwards.
+    mapping(uint256 => bool) public ghost_thresholdSeen;
+    mapping(uint256 => uint256) public ghost_threshold;
+
+    /// Ghost freeze ledger: once a round is past, its pool and supply may
+    /// only shrink (withdrawals) — never grow.
+    struct FreezeSnap {
+        bool taken;
+        uint256 reserveYes;
+        uint256 reserveNo;
+        uint256 totalShares;
+        uint256 feeReserve;
+        uint256 yesSupply;
+        uint256 noSupply;
+    }
+
+    mapping(uint256 => FreezeSnap) internal ghost_freeze;
 
     constructor(GestureSeriesMarket market_, MockCst cst_, MockGame game_) {
         market = market_;
@@ -50,8 +77,10 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
     // Fuzzed actions
     // ------------------------------------------------------------------
 
-    function addLiquidity(uint256 actorSeed, uint256 amount, uint256 declSeed, uint256 probBps) external {
-        uint256 roundId = game.roundNum();
+    function addLiquidity(uint256 actorSeed, uint256 amount, uint256 declSeed, uint256 probBps, uint256 horizonSeed)
+        external
+    {
+        uint256 roundId = game.roundNum() + _bound(horizonSeed, 0, FUTURE_HORIZON);
         if (roundId == 0) return;
         if (!_fundable(roundId)) return;
         address actor = _actor(actorSeed);
@@ -76,6 +105,7 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         ghost_cstIn += amount;
         ghost_cstOut += pendingBefore; // joining settles accrued fees in CST
         if (!wasInitialized) roundsTouched.push(roundId);
+        _afterAction();
     }
 
     function removeLiquidity(uint256 actorSeed, uint256 roundSeed, uint256 fraction) external {
@@ -88,6 +118,7 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(actor);
         (,, uint256 fees) = market.removeLiquidity(roundId, toBurn, 0, 0, type(uint256).max);
         ghost_cstOut += fees;
+        _afterAction();
     }
 
     function updateFeeDeclaration(uint256 actorSeed, uint256 roundSeed, uint256 declSeed) external {
@@ -98,6 +129,7 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         if (shares == 0) return;
         vm.prank(actor);
         market.updateFeeDeclaration(roundId, uint16(_bound(declSeed, 0, 1_000)));
+        _afterAction();
     }
 
     function claimFees(uint256 actorSeed, uint256 roundSeed) external {
@@ -107,10 +139,11 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(actor);
         uint256 fees = market.claimFees(roundId);
         ghost_cstOut += fees;
+        _afterAction();
     }
 
-    function bet(uint256 actorSeed, uint256 amount, bool yes) external {
-        uint256 roundId = game.roundNum();
+    function bet(uint256 actorSeed, uint256 amount, bool yes, uint256 horizonSeed) external {
+        uint256 roundId = game.roundNum() + _bound(horizonSeed, 0, FUTURE_HORIZON);
         if (!_tradable(roundId)) return;
         address actor = _actor(actorSeed);
         amount = _bound(amount, 1, 100_000e18);
@@ -125,10 +158,11 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
             : market.betNo(roundId, amount, 0, type(uint256).max);
         ghost_cstIn += amount;
         require(tokensOut >= amount - amount * feeBps / 10_000, "handler: token cost above 1 CST");
+        _afterAction();
     }
 
-    function mintSets(uint256 actorSeed, uint256 amount) external {
-        uint256 roundId = game.roundNum();
+    function mintSets(uint256 actorSeed, uint256 amount, uint256 horizonSeed) external {
+        uint256 roundId = game.roundNum() + _bound(horizonSeed, 0, FUTURE_HORIZON);
         if (!_initialized(roundId) || _resolved(roundId)) return;
         address actor = _actor(actorSeed);
         amount = _bound(amount, 1, 100_000e18);
@@ -136,6 +170,7 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(actor);
         market.mintSets(roundId, amount);
         ghost_cstIn += amount;
+        _afterAction();
     }
 
     function redeemSets(uint256 actorSeed, uint256 roundSeed, uint256 amount) external {
@@ -149,6 +184,7 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(actor);
         market.redeemSets(roundId, amount);
         ghost_cstOut += amount;
+        _afterAction();
     }
 
     /// Gestures happen: the live count only ever goes UP. Occasionally this
@@ -157,21 +193,27 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         uint256 roundId = game.roundNum();
         delta = _bound(delta, 1, 400);
         game.setNumBids(roundId, game.bidderAddresses(roundId) + delta);
+        _afterAction();
     }
 
     /// The round's main prize gets claimed: the game advances to a new round.
     /// Gated so campaigns spend most of their depth trading a live market.
+    /// This is the transition that turns future rounds current (their
+    /// thresholds become knowable) and current rounds past (frozen).
     function endRound(uint256 gate) external {
         if (gate % 5 != 0) return;
         game.setRoundNum(game.roundNum() + 1);
+        _afterAction();
     }
 
     function resolve(uint256 roundSeed) external {
         (uint256 roundId, bool ok) = _someRound(roundSeed);
         if (!ok || _resolved(roundId)) return;
-        (,,, uint256 threshold, uint256 count, bool active,) = market.roundState(roundId);
+        if (roundId > game.roundNum()) return; // future rounds: never resolvable
+        (,,,, uint256 threshold, uint256 count, bool active,) = market.roundState(roundId);
         if (active && count <= threshold) return; // not resolvable yet
         market.resolve(roundId);
+        _afterAction();
     }
 
     function claim(uint256 actorSeed, uint256 roundSeed) external {
@@ -180,6 +222,7 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
         address actor = _actor(actorSeed);
         vm.prank(actor);
         ghost_cstOut += market.claim(roundId);
+        _afterAction();
     }
 
     // ------------------------------------------------------------------
@@ -187,12 +230,13 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
     // ------------------------------------------------------------------
 
     /// Force every touched round to completion and exit everyone from
-    /// everything, recording all outflows.
+    /// everything, recording all outflows. Future rounds are pushed through
+    /// their whole lifecycle by advancing the game past them.
     function finishEverything() external {
         for (uint256 i = 0; i < roundsTouched.length; i++) {
             uint256 roundId = roundsTouched[i];
             if (!_resolved(roundId)) {
-                if (game.roundNum() == roundId) game.setRoundNum(roundId + 1);
+                if (game.roundNum() <= roundId) game.setRoundNum(roundId + 1);
                 market.resolve(roundId);
             }
             for (uint256 a = 0; a < actors.length; a++) {
@@ -225,26 +269,79 @@ contract SeriesHandler is CommonBase, StdCheats, StdUtils {
     }
 
     function _initialized(uint256 roundId) internal view returns (bool initialized) {
-        (initialized,,,,,,) = market.roundState(roundId);
+        (initialized,,,,,,,) = market.roundState(roundId);
     }
 
     function _resolved(uint256 roundId) internal view returns (bool resolved) {
-        (, resolved,,,,,) = market.roundState(roundId);
+        (,, resolved,,,,,) = market.roundState(roundId);
     }
 
-    /// Betting requires: initialized, unresolved, live, outcome still open.
+    /// Betting requires: initialized, unresolved, current-or-future, outcome
+    /// still open (a future round's outcome is never decided).
     function _tradable(uint256 roundId) internal view returns (bool) {
-        (bool initialized, bool resolved,,,, bool active, bool decided) = market.roundState(roundId);
-        return initialized && !resolved && active && !decided;
+        (bool initialized,, bool resolved,,,,, bool decided) = market.roundState(roundId);
+        return initialized && !resolved && roundId >= game.roundNum() && !decided;
     }
 
-    /// addLiquidity additionally works on uninitialized (current) rounds,
-    /// as long as the would-be outcome isn't decided already.
+    /// addLiquidity works on current and future rounds (round 0 excluded),
+    /// including uninitialized ones, as long as the round is unresolved and
+    /// the would-be outcome isn't decided already.
     function _fundable(uint256 roundId) internal view returns (bool) {
-        (bool initialized, bool resolved,,, uint256 count, bool active, bool decided) = market.roundState(roundId);
-        if (!active || resolved) return false;
-        if (initialized) return !decided;
-        return count <= game.bidderAddresses(roundId - 1);
+        if (roundId == 0 || roundId < game.roundNum()) return false;
+        (,, bool resolved,,,,, bool decided) = market.roundState(roundId);
+        return !resolved && !decided;
+    }
+
+    /// Self-checks two lifecycle laws after every action; a violation reverts
+    /// and `fail_on_revert` turns it into a campaign failure.
+    function _afterAction() internal {
+        uint256 currentRound = game.roundNum();
+        for (uint256 i = 0; i < roundsTouched.length; i++) {
+            uint256 roundId = roundsTouched[i];
+            _checkThresholdImmutable(roundId);
+            if (roundId < currentRound) _checkFrozenRoundOnlyShrinks(roundId);
+        }
+    }
+
+    /// A threshold never changes from the first moment it is knowable: the
+    /// lazily locked storage value must equal the live final value forever.
+    function _checkThresholdImmutable(uint256 roundId) internal {
+        (, bool known,,, uint256 threshold,,,) = market.roundState(roundId);
+        if (!known) return;
+        if (!ghost_thresholdSeen[roundId]) {
+            ghost_thresholdSeen[roundId] = true;
+            ghost_threshold[roundId] = threshold;
+        } else {
+            require(ghost_threshold[roundId] == threshold, "handler: threshold changed after becoming knowable");
+        }
+    }
+
+    /// A past round is withdraw-only: reserves, shares, fee escrow and
+    /// outstanding token supply may only ever decrease.
+    function _checkFrozenRoundOnlyShrinks(uint256 roundId) internal {
+        (uint256 rY, uint256 rN, uint256 shares,, uint256 feeReserve,,) = market.pool(roundId);
+        uint256 yesSupply = rY;
+        uint256 noSupply = rN;
+        for (uint256 a = 0; a < actors.length; a++) {
+            (uint256 yes, uint256 no) = market.balancesOf(roundId, actors[a]);
+            yesSupply += yes;
+            noSupply += no;
+        }
+        FreezeSnap storage snap = ghost_freeze[roundId];
+        if (snap.taken) {
+            require(rY <= snap.reserveYes && rN <= snap.reserveNo, "handler: frozen reserves grew");
+            require(shares <= snap.totalShares, "handler: frozen shares grew");
+            require(feeReserve <= snap.feeReserve, "handler: frozen fee escrow grew");
+            require(yesSupply <= snap.yesSupply && noSupply <= snap.noSupply, "handler: frozen supply grew");
+        } else {
+            snap.taken = true;
+        }
+        snap.reserveYes = rY;
+        snap.reserveNo = rN;
+        snap.totalShares = shares;
+        snap.feeReserve = feeReserve;
+        snap.yesSupply = yesSupply;
+        snap.noSupply = noSupply;
     }
 }
 
@@ -309,7 +406,7 @@ contract GestureSeriesMarketInvariantTest is SeriesTestBase {
     }
 
     function _roundLiability(uint256 roundId, address[] memory actorList) internal view returns (uint256 liability) {
-        (, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
+        (,, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
         (uint256 totalYes, uint256 totalNo,,, uint256 feeReserve,,) = market.pool(roundId);
 
         for (uint256 a = 0; a < actorList.length; a++) {
@@ -413,7 +510,7 @@ contract GestureSeriesMarketInvariantTest is SeriesTestBase {
     /// @dev Asserts a force-drained round holds nothing but dead-share
     /// reserves and fee dust, returning that exact retention.
     function _drainedRoundRetention(uint256 roundId, address[] memory actorList) internal view returns (uint256) {
-        (, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
+        (,, bool resolved, bool yesWon,,,,) = market.roundState(roundId);
         assertTrue(resolved, "teardown left a round unresolved");
         (uint256 rY, uint256 rN, uint256 totalShares,, uint256 feeReserve,,) = market.pool(roundId);
         if (totalShares != 0) {

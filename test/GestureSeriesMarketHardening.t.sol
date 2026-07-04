@@ -127,7 +127,7 @@ contract GestureSeriesMarketHardeningTest is SeriesTestBase {
 
     /// A whale voting the maximum can never push the fee beyond the 10% cap,
     /// and quotes always reflect exactly what execution charges.
-    function test_attack_feeVoteWhaleIsCappded() public {
+    function test_attack_feeVoteWhaleIsCapped() public {
         _seedPoolWith(lpAda, LIQ, 1_000, 5_000);
         vm.prank(bob);
         market.addLiquidity(ROUND, LIQ * 100, 1_000, 0, 0, NO_DEADLINE);
@@ -538,5 +538,262 @@ contract GestureSeriesMarketHardeningTest is SeriesTestBase {
         vm.prank(bob);
         vm.expectRevert(GestureSeriesMarket.AlreadyResolved.selector);
         market.resolve(ROUND);
+    }
+
+    // ------------------------------------------------------------------
+    // The rug: LP pulls everything right after the victim's bet fills
+    // ------------------------------------------------------------------
+
+    /// The attack this design gets asked about most: the LP waits for a bet
+    /// to land, then yanks 100% of the liquidity in the very next
+    /// transaction. The victim's fill already beat their floor; the rug can
+    /// touch neither their tokens, nor their collateral, nor their payout —
+    /// and (this scenario: the victim's side wins) the rugger comes out
+    /// strictly DOWN, holding the losing inventory.
+    function test_attack_lpRugAfterBetCannotTouchBettorFunds() public {
+        address rugger = bob;
+        address victim = alice;
+        uint256 ruggerStart = cst.balanceOf(rugger);
+
+        vm.prank(rugger);
+        uint256 ruggerShares = market.addLiquidity(ROUND, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+
+        // The victim quotes, signs a 1% floor, and fills fairly.
+        uint256 quoted = market.quoteBetYes(ROUND, 2_000e18);
+        vm.prank(victim);
+        uint256 filled = market.betYes(ROUND, 2_000e18, quoted * 99 / 100, NO_DEADLINE);
+
+        // THE RUG: everything out, immediately.
+        vm.prank(rugger);
+        (uint256 rugYes,, uint256 rugFees) = market.removeLiquidity(ROUND, ruggerShares, 0, 0, NO_DEADLINE);
+
+        // 1. The victim's position is untouched...
+        (uint256 victimYes,) = market.balancesOf(ROUND, victim);
+        assertEq(victimYes, filled, "rug altered the victim's tokens");
+
+        // 2. ...and still fully collateralized, to the wei: the contract
+        // holds exactly 1 CST per outstanding set plus the fee escrow.
+        {
+            (uint256 rY, uint256 rN,,, uint256 feeReserve,,) = market.pool(ROUND);
+            (, uint256 rugNoBal) = market.balancesOf(ROUND, rugger);
+            uint256 yesSupply = rY + victimYes + rugYes;
+            uint256 noSupply = rN + rugNoBal;
+            assertEq(yesSupply, noSupply, "set supplies diverged");
+            assertEq(cst.balanceOf(address(market)), yesSupply + feeReserve, "collateralization broken by the rug");
+        }
+
+        // 3. The fee skim is bounded to the one bet the rugger hosted.
+        assertLe(rugFees, 2_000e18 * uint256(FEE) / BPS + 1, "rugger skimmed beyond the bet's fee");
+
+        // 4. The victim's side wins: the claim pays 1:1 in full, rug or not.
+        _crossThreshold();
+        market.resolve(ROUND);
+        vm.prank(victim);
+        assertEq(market.claim(ROUND), filled, "victim's payout degraded by the rug");
+
+        // 5. The rugger's full exit (winning tokens claimed, losers void)
+        // leaves them strictly down: the rug bought no edge, it just locked
+        // in the losing side of the victim's trade.
+        vm.prank(rugger);
+        market.claim(ROUND);
+        assertLt(cst.balanceOf(rugger), ruggerStart, "rugging a winning bettor somehow paid");
+    }
+
+    /// After a full rug the bettor is NOT trapped: betting the opposite side
+    /// works even against the leftover dust (a bet always returns at least
+    /// its net input, because it mints sets), and pairs redeem 1:1 for CST.
+    function test_attack_rugVictimCanStillExitEarly() public {
+        vm.prank(bob);
+        uint256 ruggerShares = market.addLiquidity(ROUND, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+        vm.prank(alice);
+        uint256 filled = market.betYes(ROUND, 2_000e18, 0, NO_DEADLINE);
+        vm.prank(bob);
+        market.removeLiquidity(ROUND, ruggerShares, 0, 0, NO_DEADLINE);
+
+        (uint256 rY, uint256 rN) = _reserves(ROUND);
+        assertLt(rY + rN, 1e6, "sanity: the pool really is dust now");
+
+        // Enough CST on NO to pair the whole YES position, fee included.
+        uint256 feeNow = market.currentFeeBps(ROUND);
+        uint256 spend = filled * BPS / (BPS - feeNow) + 1;
+        vm.startPrank(alice);
+        uint256 noOut = market.betNo(ROUND, spend, 0, NO_DEADLINE);
+        assertGe(noOut, filled, "the mint component must cover the position");
+        market.redeemSets(ROUND, filled);
+        vm.stopPrank();
+
+        (uint256 yesLeft,) = market.balancesOf(ROUND, alice);
+        assertEq(yesLeft, 0, "victim fully exited the YES position pre-resolution");
+    }
+
+    /// The mempool-watching liquidity pull, replayed against a FUTURE
+    /// round's pool: the mandatory floor protects bets identically in every
+    /// phase.
+    function test_attack_lpPullsLiquidityBeforeBetOnFutureRound() public {
+        uint256 future = ROUND + 2;
+        vm.prank(lpAda);
+        uint256 adaShares = market.addLiquidity(future, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+
+        uint256 quoted = market.quoteBetYes(future, 1_000e18);
+        uint256 minOut = quoted * 99 / 100;
+
+        vm.prank(lpAda);
+        market.removeLiquidity(future, adaShares * 95 / 100, 0, 0, NO_DEADLINE);
+
+        vm.prank(alice);
+        vm.expectRevert(GestureSeriesMarket.Slippage.selector);
+        market.betYes(future, 1_000e18, minOut, NO_DEADLINE);
+    }
+
+    // ------------------------------------------------------------------
+    // The threshold reveal
+    // ------------------------------------------------------------------
+
+    /// The reveal snipe: a future pool sits at 50/50 when the previous round
+    /// ends with a huge count, making YES a long shot. The sniper's bet in
+    /// the transition block already trades against the just-locked threshold
+    /// (the sync is in-call), pays the pool's price and fee, and moves value
+    /// only out of LP inventory — full collateralization is untouched.
+    function test_attack_transitionBlockRevealSniping() public {
+        uint256 future = ROUND + 1;
+        vm.prank(lpAda);
+        market.addLiquidity(future, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+        vm.prank(alice);
+        uint256 aliceYes = market.betYes(future, 1_000e18, 0, NO_DEADLINE);
+
+        // ROUND ends enormous: round `future` now needs > 50k gestures for
+        // YES, but the pool still prices it near 50%.
+        (, uint256 preRN) = _reserves(future);
+        _endRoundWith(50_000);
+
+        vm.expectEmit(true, false, false, true);
+        emit GestureSeriesMarket.ThresholdLocked(future, 50_000);
+        vm.prank(bob);
+        uint256 snipedNo = market.betNo(future, 5_000e18, 0, NO_DEADLINE);
+
+        // The sniper's edge is bounded by what the pool held: everything
+        // beyond their own minted tokens came out of the NO reserve.
+        uint256 net = 5_000e18 - 5_000e18 * uint256(FEE) / BPS;
+        assertLe(snipedNo - net, preRN, "sniper extracted more than LP inventory");
+
+        // Solvency is exact through the snipe.
+        (uint256 rY, uint256 rN,,, uint256 feeReserve,,) = market.pool(future);
+        assertEq(rY + aliceYes, rN + snipedNo, "set supplies diverged");
+        assertEq(cst.balanceOf(address(market)), rY + aliceYes + feeReserve, "collateralization broken by the snipe");
+    }
+
+    /// Degenerate reveal: the previous round ends with ZERO gestures, so the
+    /// very first gesture of the new round decides YES. Even when both land
+    /// in the same block, the in-call sync + decided-check refuse the trade
+    /// — there is no ordering of events that lets certainty be bought.
+    function test_attack_thresholdZeroInstantDecisionSameBlock() public {
+        uint256 future = ROUND + 1;
+        vm.prank(lpAda);
+        market.addLiquidity(future, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+
+        _endRoundWith(0); // previous round: zero gestures -> threshold 0
+        game.setNumBids(future, 1); // first gesture lands in the same block
+
+        vm.prank(alice);
+        vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
+        market.betYes(future, 1_000e18, 0, NO_DEADLINE);
+        vm.prank(alice);
+        vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
+        market.betNo(future, 1_000e18, 0, NO_DEADLINE);
+        vm.prank(lpBen);
+        vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
+        market.addLiquidity(future, 1_000e18, FEE, 0, 0, NO_DEADLINE);
+
+        market.resolve(future); // early YES, instantly available
+        assertTrue(_state(future).yesWon);
+    }
+
+    /// Betting on published results, future-round flavor: a round funded as
+    /// FUTURE whose whole life passed untouched. Every funding path must
+    /// refuse — the result is public — while resolution and claims work.
+    function test_attack_cannotBetOnFutureRoundThatAlreadyPassed() public {
+        uint256 future = ROUND + 1;
+        vm.prank(lpAda);
+        market.addLiquidity(future, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+        vm.prank(alice);
+        market.betNo(future, 1_000e18, 0, NO_DEADLINE);
+
+        // Both rounds fly by without the market being touched.
+        _endRoundWith(800);
+        game.setNumBids(future, 750); // 750 <= 800: NO wins, publicly
+        game.setRoundNum(future + 1);
+
+        vm.startPrank(bob);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.betNo(future, 10_000e18, 0, NO_DEADLINE);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.addLiquidity(future, 1_000e18, FEE, 0, 0, NO_DEADLINE);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.mintSets(future, 1e18);
+        vm.stopPrank();
+
+        market.resolve(future);
+        (, uint256 aliceNo) = market.balancesOf(future, alice);
+        vm.prank(alice);
+        assertEq(market.claim(future), aliceNo, "honest pre-round bet pays out");
+    }
+
+    // ------------------------------------------------------------------
+    // Future-pool inflation & init front-running
+    // ------------------------------------------------------------------
+
+    /// The classic share-inflation attack aimed at a FUTURE pool — the new
+    /// surface must be exactly as hardened as the current round's.
+    function test_attack_shareInflationOnFuturePoolYieldsOnlyDust() public {
+        uint256 future = ROUND + 2;
+        address attacker = bob;
+        address victim = lpBen;
+
+        vm.prank(attacker);
+        market.addLiquidity(future, 1e15, FEE, 5_000, 0, NO_DEADLINE);
+        vm.prank(attacker);
+        market.betYes(future, 1_000_000e18, 0, NO_DEADLINE);
+
+        uint256 victimCash = cst.balanceOf(victim);
+        vm.prank(victim);
+        uint256 victimShares = market.addLiquidity(future, 10_000e18, FEE, 0, 0, NO_DEADLINE);
+        assertGt(victimShares, 0, "victim must always receive shares");
+
+        vm.startPrank(victim);
+        market.removeLiquidity(future, victimShares, 0, 0, NO_DEADLINE);
+        (uint256 yes, uint256 no) = market.balancesOf(future, victim);
+        market.redeemSets(future, yes < no ? yes : no);
+        vm.stopPrank();
+        (uint256 yesLeft, uint256 noLeft) = market.balancesOf(future, victim);
+        uint256 harshLoss = victimCash - cst.balanceOf(victim) - (yesLeft < noLeft ? yesLeft : noLeft);
+        assertLt(harshLoss, 1e13, "victim lost more than dust to the future-pool inflation attack");
+    }
+
+    /// Squatting the opening price: an attacker front-runs the first LP with
+    /// a dust deposit at an extreme probability, so the honest opener lands
+    /// as a JOINER at the squatter's ratio. Joins credit all excess back and
+    /// never move the price, so the joiner can leave immediately for at most
+    /// rounding dust — squatting extracts nothing.
+    function test_attack_initFrontRunSquattingExtractsNothing() public {
+        vm.prank(bob);
+        market.addLiquidity(ROUND, 1e15, 1_000, 9_900, 0, NO_DEADLINE);
+        uint256 squatterValueBefore = _lpClaimValueCeiling(bob);
+
+        // The honest LP's "open at 50%" transaction lands second: a join.
+        uint256 adaCash = cst.balanceOf(lpAda);
+        vm.prank(lpAda);
+        uint256 shares = market.addLiquidity(ROUND, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+
+        // She disagrees with the squatted price and leaves immediately.
+        vm.startPrank(lpAda);
+        market.removeLiquidity(ROUND, shares, 0, 0, NO_DEADLINE);
+        (uint256 yes, uint256 no) = market.balancesOf(ROUND, lpAda);
+        market.redeemSets(ROUND, yes < no ? yes : no);
+        vm.stopPrank();
+
+        (uint256 yesLeft, uint256 noLeft) = market.balancesOf(ROUND, lpAda);
+        uint256 harshLoss = adaCash - cst.balanceOf(lpAda) - (yesLeft < noLeft ? yesLeft : noLeft);
+        assertLt(harshLoss, 1e13, "squat roundtrip cost the honest LP more than dust");
+        assertLe(_lpClaimValueCeiling(bob), squatterValueBefore + 1e13, "squatter profited from the roundtrip");
     }
 }

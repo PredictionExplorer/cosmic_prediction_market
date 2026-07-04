@@ -46,6 +46,32 @@ abstract contract SeriesTestBase is Test {
         }
     }
 
+    /// @dev A memory mirror of `roundState`'s outputs, so tests read one field
+    /// by name instead of destructuring an 8-tuple.
+    struct RoundView {
+        bool initialized;
+        bool thresholdKnown;
+        bool resolved;
+        bool yesWon;
+        uint256 threshold;
+        uint256 currentCount;
+        bool roundActive;
+        bool outcomeDecided;
+    }
+
+    function _state(uint256 roundId) internal view returns (RoundView memory v) {
+        (
+            v.initialized,
+            v.thresholdKnown,
+            v.resolved,
+            v.yesWon,
+            v.threshold,
+            v.currentCount,
+            v.roundActive,
+            v.outcomeDecided
+        ) = market.roundState(roundId);
+    }
+
     /// @dev Opens ROUND's pool with `liq` CST at 50/50 odds and a 2% fee vote,
     /// via lpAda.
     function _seedPool(uint256 liq) internal returns (uint256 shares) {
@@ -57,6 +83,12 @@ abstract contract SeriesTestBase is Test {
     function _seedPoolWith(address lp, uint256 liq, uint16 feeBps, uint256 probBps) internal returns (uint256 shares) {
         vm.prank(lp);
         shares = market.addLiquidity(ROUND, liq, feeBps, probBps, 0, NO_DEADLINE);
+    }
+
+    /// @dev Opens ANY round's pool (current or future) at 50/50 odds via `lp`.
+    function _seedRoundPool(uint256 roundId, address lp, uint256 liq) internal returns (uint256 shares) {
+        vm.prank(lp);
+        shares = market.addLiquidity(roundId, liq, FEE, 5_000, 0, NO_DEADLINE);
     }
 
     /// @dev Ends ROUND with the given final gesture count (advances the game).

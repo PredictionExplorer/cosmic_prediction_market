@@ -414,22 +414,32 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
     // Lifecycle & resolution
     // ------------------------------------------------------------------
 
-    /// Resolution truth table, for any counts: after the round ends YES wins
-    /// iff final > threshold (ties pay NO); early resolution exists iff the
-    /// live count already exceeds the threshold, and always resolves YES.
-    function testFuzz_resolutionMatchesStrictComparison(uint256 threshold, uint256 finalCount, bool early) public {
+    /// Resolution truth table, for any counts and any phase: a FUTURE round
+    /// is never resolvable no matter what the game data shows; after the
+    /// round ends YES wins iff final > threshold (ties pay NO); early
+    /// resolution exists iff the live count already exceeds the threshold,
+    /// and always resolves YES.
+    function testFuzz_resolutionMatchesStrictComparison(uint256 threshold, uint256 finalCount, uint8 phase) public {
         threshold = bound(threshold, 0, 1e30);
         finalCount = bound(finalCount, 0, 1e30);
         game.setNumBids(ROUND - 1, threshold);
         _seedPool(LIQ);
 
-        if (early) {
+        if (phase % 3 == 0) {
+            // Future: a round funded ahead of time is not resolvable no
+            // matter what counts exist anywhere in the game.
+            uint256 future = ROUND + 1;
+            _seedRoundPool(future, lpAda, LIQ);
+            game.setNumBids(future, finalCount);
+            vm.expectRevert(GestureSeriesMarket.NotResolvable.selector);
+            market.resolve(future);
+        } else if (phase % 3 == 1) {
             game.setNumBids(ROUND, finalCount); // round stays live
             if (finalCount > threshold) {
                 market.resolve(ROUND);
-                (, bool resolved, bool yesWon,,,,) = market.roundState(ROUND);
-                assertTrue(resolved);
-                assertTrue(yesWon, "early resolution can only be YES");
+                RoundView memory v = _state(ROUND);
+                assertTrue(v.resolved);
+                assertTrue(v.yesWon, "early resolution can only be YES");
             } else {
                 vm.expectRevert(GestureSeriesMarket.NotResolvable.selector);
                 market.resolve(ROUND);
@@ -437,8 +447,7 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         } else {
             _endRoundWith(finalCount);
             market.resolve(ROUND);
-            (,, bool yesWon,,,,) = market.roundState(ROUND);
-            assertEq(yesWon, finalCount > threshold, "strict comparison violated");
+            assertEq(_state(ROUND).yesWon, finalCount > threshold, "strict comparison violated");
         }
     }
 
@@ -550,12 +559,167 @@ contract GestureSeriesMarketFuzzTest is SeriesTestBase {
         // Exact conservation: what remains is precisely the CST backing the
         // winning-side tokens still locked under the dead shares, plus the
         // unclaimable fee-rounding escrow. Not one wei more or less.
-        (, bool resolvedFlag, bool yesWon,,,,) = market.roundState(ROUND);
-        assertTrue(resolvedFlag);
+        RoundView memory v = _state(ROUND);
+        bool yesWon = v.yesWon;
+        assertTrue(v.resolved);
         (uint256 rYl, uint256 rNl, uint256 sharesLeft,, uint256 feeLeft,,) = market.pool(ROUND);
         assertEq(sharesLeft, DEAD_SHARES, "only dead shares may remain");
         assertEq(
             cst.balanceOf(address(market)), feeLeft + (yesWon ? rYl : rNl), "retained CST diverged from liabilities"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Future rounds & threshold locking
+    // ------------------------------------------------------------------
+
+    /// The locked threshold always equals the previous round's final count,
+    /// whichever entry point locks it and however many rounds pass before the
+    /// first touch.
+    function testFuzz_thresholdLockMatchesFinalPrevCount(uint256 prevFinal, uint256 delaySeed, uint256 touchSeed)
+        public
+    {
+        uint256 future = ROUND + 1;
+        prevFinal = bound(prevFinal, 0, 1e30);
+        uint256 delay = bound(delaySeed, 0, 3); // extra rounds before the first touch
+        uint256 touch = touchSeed % 3;
+
+        _seedRoundPool(future, lpAda, LIQ);
+        assertFalse(_state(future).thresholdKnown);
+
+        _endRoundWith(prevFinal); // ROUND ends; `future` becomes current
+        // Adds and bets only work while the round is current-or-future, so a
+        // delayed first touch necessarily happens via resolve.
+        bool viaResolve = touch == 2 || delay > 0;
+        if (delay > 0) game.setRoundNum(future + delay);
+        if (viaResolve && game.roundNum() == future) game.setRoundNum(future + 1);
+
+        vm.expectEmit(true, false, false, true);
+        emit GestureSeriesMarket.ThresholdLocked(future, prevFinal);
+        if (viaResolve) {
+            market.resolve(future);
+        } else if (touch == 0) {
+            vm.prank(lpBen);
+            market.addLiquidity(future, 1e18, FEE, 0, 0, NO_DEADLINE);
+        } else {
+            vm.prank(alice);
+            market.betYes(future, 1e18, 0, NO_DEADLINE);
+        }
+        assertEq(_state(future).threshold, prevFinal, "locked threshold diverged from the final count");
+    }
+
+    /// The flagship conservation property extended across phases: positions
+    /// taken BEFORE the round exists, through the threshold reveal, into the
+    /// live round and resolution — everyone exits in full and the contract
+    /// retains exactly dead-share reserves plus fee dust.
+    function testFuzz_crossPhaseLifecycleConservation(
+        uint256 liq,
+        uint256 futureBet,
+        uint256 currentBet,
+        uint256 revealedThreshold,
+        uint256 finalCount,
+        bool futureBetYes,
+        bool currentBetYes
+    ) public {
+        uint256 future = ROUND + 1;
+        liq = bound(liq, 1e15, 300_000e18);
+        futureBet = bound(futureBet, 1, 300_000e18);
+        currentBet = bound(currentBet, 1, 300_000e18);
+        revealedThreshold = bound(revealedThreshold, 0, 1e30);
+        finalCount = bound(finalCount, 0, 1e30);
+
+        // Future phase: the market exists before its round does.
+        _seedRoundPool(future, lpAda, liq);
+        vm.prank(alice);
+        if (futureBetYes) market.betYes(future, futureBet, 0, NO_DEADLINE);
+        else market.betNo(future, futureBet, 0, NO_DEADLINE);
+
+        // Reveal: ROUND ends with an arbitrary count; more trading after it.
+        _endRoundWith(revealedThreshold);
+        vm.prank(bob);
+        if (currentBetYes) market.betYes(future, currentBet, 0, NO_DEADLINE);
+        else market.betNo(future, currentBet, 0, NO_DEADLINE);
+
+        // The round runs and ends with an arbitrary count.
+        game.setNumBids(future, finalCount);
+        game.setRoundNum(future + 1);
+        market.resolve(future);
+
+        address[3] memory everyone = [lpAda, alice, bob];
+        for (uint256 i = 0; i < everyone.length; i++) {
+            uint256 shares = _lpShares(future, everyone[i]);
+            if (shares > 0) {
+                vm.prank(everyone[i]);
+                market.removeLiquidity(future, shares, 0, 0, NO_DEADLINE);
+            }
+            vm.prank(everyone[i]);
+            market.claimFees(future);
+            vm.prank(everyone[i]);
+            market.claim(future);
+        }
+
+        (uint256 rYl, uint256 rNl, uint256 sharesLeft,, uint256 feeLeft,,) = market.pool(future);
+        assertEq(sharesLeft, DEAD_SHARES, "only dead shares may remain");
+        assertEq(
+            cst.balanceOf(address(market)),
+            feeLeft + (_state(future).yesWon ? rYl : rNl),
+            "retained CST is not exactly dead-share reserves plus fee dust"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // LP actions can never change what a bettor is owed
+    // ------------------------------------------------------------------
+
+    /// After a bettor's fill, ANY sequence of LP maneuvers — partial or full
+    /// rugs, fresh joins, fee re-votes — leaves the bettor's balance and
+    /// resolution payout exactly as filled: LPs cannot touch a filled bet.
+    function testFuzz_lpActionsNeverChangeABettorsPayout(
+        uint256 betAmount,
+        bool betIsYes,
+        uint256[3] memory lpAmounts,
+        uint256[3] memory lpActions,
+        bool yesWins
+    ) public {
+        betAmount = bound(betAmount, 1, 200_000e18);
+        _seedPool(LIQ);
+
+        vm.prank(alice);
+        uint256 tokensOut =
+            betIsYes ? market.betYes(ROUND, betAmount, 0, NO_DEADLINE) : market.betNo(ROUND, betAmount, 0, NO_DEADLINE);
+
+        // Arbitrary post-fill LP maneuvering, including a full rug.
+        for (uint256 i = 0; i < 3; i++) {
+            uint256 action = lpActions[i] % 3;
+            if (action == 0) {
+                uint256 shares = _lpShares(ROUND, lpAda);
+                if (shares == 0) continue;
+                vm.prank(lpAda);
+                market.removeLiquidity(ROUND, bound(lpAmounts[i], 1, shares), 0, 0, NO_DEADLINE);
+            } else if (action == 1) {
+                (uint256 rY, uint256 rN) = _reserves(ROUND);
+                if (rY == 0 || rN == 0) continue;
+                vm.prank(lpBen);
+                try market.addLiquidity(ROUND, bound(lpAmounts[i], 1e15, 100_000e18), 1_000, 0, 0, NO_DEADLINE) {}
+                    catch {}
+            } else {
+                if (_lpShares(ROUND, lpAda) == 0) continue;
+                vm.prank(lpAda);
+                market.updateFeeDeclaration(ROUND, uint16(bound(lpAmounts[i], 0, MAX_FEE_BPS)));
+            }
+        }
+
+        (uint256 yesBal, uint256 noBal) = market.balancesOf(ROUND, alice);
+        assertEq(betIsYes ? yesBal : noBal, tokensOut, "LP actions altered the bettor's balance");
+
+        _endRoundWith(yesWins ? THRESHOLD + 1 : THRESHOLD);
+        market.resolve(ROUND);
+        vm.prank(alice);
+        uint256 payout = market.claim(ROUND);
+        assertEq(
+            payout,
+            betIsYes == yesWins ? tokensOut : 0,
+            "payout must be exactly the filled tokens (or zero if the bet lost)"
         );
     }
 

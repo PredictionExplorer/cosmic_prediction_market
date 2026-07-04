@@ -28,27 +28,41 @@ contract GestureSeriesMarketTest is SeriesTestBase {
 
     function test_firstAddLiquidityInitializesRound() public {
         vm.expectEmit(true, false, false, true);
-        emit GestureSeriesMarket.RoundInitialized(ROUND, THRESHOLD);
+        emit GestureSeriesMarket.RoundInitialized(ROUND);
+        vm.expectEmit(true, false, false, true);
+        emit GestureSeriesMarket.ThresholdLocked(ROUND, THRESHOLD);
         _seedPool(LIQ);
 
-        (bool initialized,,, uint256 threshold,, bool active, bool decided) = market.roundState(ROUND);
-        assertTrue(initialized);
-        assertTrue(active);
-        assertFalse(decided);
-        assertEq(threshold, THRESHOLD, "threshold is the previous round's final count");
+        RoundView memory v = _state(ROUND);
+        assertTrue(v.initialized);
+        assertTrue(v.roundActive);
+        assertFalse(v.outcomeDecided);
+        assertTrue(v.thresholdKnown, "current-round init locks the threshold immediately");
+        assertEq(v.threshold, THRESHOLD, "threshold is the previous round's final count");
     }
 
-    function test_cannotInitializeNonCurrentRound() public {
-        vm.startPrank(lpAda);
+    function test_cannotInitializePastRound() public {
+        vm.prank(lpAda);
         vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
-        market.addLiquidity(ROUND + 1, LIQ, FEE, 5_000, 0, NO_DEADLINE); // future
+        market.addLiquidity(ROUND - 1, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+
+        // Even a round that WAS fundable becomes closed to adds once the game
+        // passes it: initialize now, then try to add after it ends.
+        _seedPool(LIQ);
+        _endRoundWith(700);
+        vm.prank(lpBen);
         vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
-        market.addLiquidity(ROUND - 1, LIQ, FEE, 5_000, 0, NO_DEADLINE); // past
-        vm.stopPrank();
+        market.addLiquidity(ROUND, 1_000e18, FEE, 0, 0, NO_DEADLINE);
     }
 
     function test_cannotInitializeRoundZero() public {
+        // While the game is IN round 0 (round 0 has no previous round)...
         game.setRoundNum(0);
+        vm.prank(lpAda);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.addLiquidity(0, LIQ, FEE, 5_000, 0, NO_DEADLINE);
+        // ...and forever after (round 0 is then simply a past round).
+        game.setRoundNum(ROUND);
         vm.prank(lpAda);
         vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
         market.addLiquidity(0, LIQ, FEE, 5_000, 0, NO_DEADLINE);
@@ -60,8 +74,7 @@ contract GestureSeriesMarketTest is SeriesTestBase {
         vm.expectRevert(GestureSeriesMarket.OutcomeDecided.selector);
         market.addLiquidity(ROUND, LIQ, FEE, 5_000, 0, NO_DEADLINE);
 
-        (bool initialized,,,,,,) = market.roundState(ROUND);
-        assertFalse(initialized, "failed init must roll back entirely");
+        assertFalse(_state(ROUND).initialized, "failed init must roll back entirely");
     }
 
     // ------------------------------------------------------------------
@@ -446,25 +459,23 @@ contract GestureSeriesMarketTest is SeriesTestBase {
         emit GestureSeriesMarket.Resolved(ROUND, THRESHOLD + 123, true);
         market.resolve(ROUND);
 
-        (, bool resolved, bool yesWon,,,,) = market.roundState(ROUND);
-        assertTrue(resolved);
-        assertTrue(yesWon);
+        RoundView memory v = _state(ROUND);
+        assertTrue(v.resolved);
+        assertTrue(v.yesWon);
     }
 
     function test_resolveAfterRoundEndNoWins() public {
         _seedPool(LIQ);
         _endRoundWith(THRESHOLD - 1);
         market.resolve(ROUND);
-        (,, bool yesWon,,,,) = market.roundState(ROUND);
-        assertFalse(yesWon);
+        assertFalse(_state(ROUND).yesWon);
     }
 
     function test_tieMeansNoWins() public {
         _seedPool(LIQ);
         _endRoundWith(THRESHOLD); // exactly equal
         market.resolve(ROUND);
-        (,, bool yesWon,,,,) = market.roundState(ROUND);
-        assertFalse(yesWon, "strictly greater required: a tie pays NO");
+        assertFalse(_state(ROUND).yesWon, "strictly greater required: a tie pays NO");
     }
 
     function test_earlyResolveTheMomentThresholdIsCrossed() public {
@@ -472,10 +483,10 @@ contract GestureSeriesMarketTest is SeriesTestBase {
         _crossThreshold(); // round still live!
 
         market.resolve(ROUND);
-        (, bool resolved, bool yesWon,,, bool active,) = market.roundState(ROUND);
-        assertTrue(resolved);
-        assertTrue(yesWon);
-        assertTrue(active, "resolved early while the round is still running");
+        RoundView memory v = _state(ROUND);
+        assertTrue(v.resolved);
+        assertTrue(v.yesWon);
+        assertTrue(v.roundActive, "resolved early while the round is still running");
     }
 
     function test_noEarlyResolveForNo() public {
@@ -725,8 +736,7 @@ contract GestureSeriesMarketTest is SeriesTestBase {
 
         vm.prank(lpBen);
         market.addLiquidity(ROUND + 1, LIQ, 500, 5_000, 0, NO_DEADLINE);
-        (,,, uint256 threshold,,,) = market.roundState(ROUND + 1);
-        assertEq(threshold, 950, "next round compares against the new count");
+        assertEq(_state(ROUND + 1).threshold, 950, "next round compares against the new count");
         assertEq(market.currentFeeBps(ROUND + 1), 500, "fresh pool, fresh fee vote");
         assertEq(market.currentFeeBps(ROUND), FEE, "old round's vote untouched");
 
@@ -741,19 +751,329 @@ contract GestureSeriesMarketTest is SeriesTestBase {
     }
 
     function test_roundStateViewCoherent() public {
-        (bool initialized,,,,, bool active,) = market.roundState(ROUND);
-        assertFalse(initialized);
-        assertTrue(active);
+        RoundView memory v = _state(ROUND);
+        assertFalse(v.initialized);
+        assertTrue(v.roundActive);
+        assertTrue(v.thresholdKnown, "current round's threshold is knowable pre-init");
+        assertEq(v.threshold, THRESHOLD, "view reports the live (final) value before locking");
 
         _seedPool(LIQ);
         game.setNumBids(ROUND, 500);
-        (,,, uint256 threshold, uint256 count,, bool decided) = market.roundState(ROUND);
-        assertEq(threshold, THRESHOLD);
-        assertEq(count, 500);
-        assertFalse(decided);
+        v = _state(ROUND);
+        assertEq(v.threshold, THRESHOLD);
+        assertEq(v.currentCount, 500);
+        assertFalse(v.outcomeDecided);
 
         _crossThreshold();
-        (,,,,,, decided) = market.roundState(ROUND);
-        assertTrue(decided);
+        assertTrue(_state(ROUND).outcomeDecided);
+    }
+
+    function test_roundStateViewForFutureAndRoundZero() public view {
+        // A future round: threshold unknowable, never active, never decided.
+        RoundView memory v = _state(ROUND + 3);
+        assertFalse(v.initialized);
+        assertFalse(v.thresholdKnown);
+        assertEq(v.threshold, 0);
+        assertFalse(v.roundActive);
+        assertFalse(v.outcomeDecided);
+
+        // Round 0 never has a threshold (no previous round), even when past.
+        v = _state(0);
+        assertFalse(v.thresholdKnown);
+        assertEq(v.threshold, 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Round end: everything freezes except withdrawals
+    // ------------------------------------------------------------------
+
+    function test_endedRoundIsWithdrawOnly() public {
+        _seedPool(LIQ);
+        vm.prank(alice);
+        market.betYes(ROUND, 1_000e18, 0, NO_DEADLINE);
+        vm.prank(bob);
+        market.mintSets(ROUND, 100e18);
+
+        _endRoundWith(THRESHOLD); // round over, deliberately left unresolved
+
+        // Every way of putting funds IN is closed...
+        vm.startPrank(alice);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.betYes(ROUND, 1e18, 0, NO_DEADLINE);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.betNo(ROUND, 1e18, 0, NO_DEADLINE);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.mintSets(ROUND, 1e18);
+        vm.stopPrank();
+        vm.prank(lpBen);
+        vm.expectRevert(GestureSeriesMarket.RoundNotActive.selector);
+        market.addLiquidity(ROUND, 1_000e18, FEE, 0, 0, NO_DEADLINE);
+
+        // ...while every way of taking funds OUT still works.
+        vm.startPrank(lpAda);
+        market.updateFeeDeclaration(ROUND, 50); // harmless: no bets can ever pay it
+        (uint256 yesOut, uint256 noOut, uint256 fees) =
+            market.removeLiquidity(ROUND, _lpShares(ROUND, lpAda) / 2, 0, 0, NO_DEADLINE);
+        assertGt(yesOut + noOut, 0);
+        assertGt(fees, 0, "fees from the pre-end bet still claimable");
+        vm.stopPrank();
+        vm.prank(bob);
+        market.redeemSets(ROUND, 100e18); // paired exit needs no resolution
+    }
+
+    function test_endedUnresolvedRoundAllowsFullLpExit() public {
+        uint256 shares = _seedPool(LIQ);
+        vm.prank(alice);
+        market.betYes(ROUND, 2_000e18, 0, NO_DEADLINE);
+
+        _endRoundWith(THRESHOLD); // ended; NOBODY resolves
+
+        vm.startPrank(lpAda);
+        (uint256 yesOut, uint256 noOut,) = market.removeLiquidity(ROUND, shares, 0, 0, NO_DEADLINE);
+        uint256 pairs = yesOut < noOut ? yesOut : noOut;
+        market.redeemSets(ROUND, pairs);
+        vm.stopPrank();
+        assertEq(_lpShares(ROUND, lpAda), 0, "full exit without any resolution");
+
+        // The one-sided remainder pays out the moment anyone resolves.
+        market.resolve(ROUND); // tie: NO wins
+        (uint256 yesLeft, uint256 noLeft) = market.balancesOf(ROUND, lpAda);
+        assertGt(noLeft, 0, "YES bet skewed the pool toward NO inventory");
+        vm.prank(lpAda);
+        assertEq(market.claim(ROUND), noLeft, "surviving NO pays 1:1; leftover YES pays 0");
+        assertEq(yesLeft, 0, "pairs were redeemed down to one side");
+    }
+
+    function test_claimThenRemoveThenClaimAgain() public {
+        uint256 shares = _seedPool(LIQ);
+        vm.prank(lpAda);
+        market.betYes(ROUND, 1_000e18, 0, NO_DEADLINE); // LP also bets personally
+
+        _endRoundWith(THRESHOLD + 1);
+        market.resolve(ROUND);
+
+        // Claim the personal position FIRST...
+        (uint256 personalYes,) = market.balancesOf(ROUND, lpAda);
+        vm.prank(lpAda);
+        assertEq(market.claim(ROUND), personalYes);
+
+        // ...then unwind the LP position and claim AGAIN for the pool-side YES.
+        vm.prank(lpAda);
+        (uint256 yesOut,,) = market.removeLiquidity(ROUND, shares, 0, 0, NO_DEADLINE);
+        vm.prank(lpAda);
+        assertEq(market.claim(ROUND), yesOut, "second claim pays the just-withdrawn winning reserves");
+    }
+
+    // ------------------------------------------------------------------
+    // Future rounds: fund, trade, lock, resolve
+    // ------------------------------------------------------------------
+
+    function test_addLiquidityInitializesFutureRound() public {
+        uint256 future = ROUND + 2;
+        vm.expectEmit(true, false, false, true);
+        emit GestureSeriesMarket.RoundInitialized(future);
+        vm.prank(lpAda);
+        uint256 shares = market.addLiquidity(future, LIQ, FEE, 3_000, 0, NO_DEADLINE);
+        assertGt(shares, 0);
+
+        RoundView memory v = _state(future);
+        assertTrue(v.initialized);
+        assertFalse(v.thresholdKnown, "a future round has no threshold yet");
+        assertEq(v.threshold, 0);
+        assertFalse(v.roundActive);
+        assertFalse(v.outcomeDecided);
+        assertApproxEqAbs(_probBps(future), 3_000, 1, "first LP still sets the opening odds");
+    }
+
+    function test_betAndSetsWorkOnFutureRound() public {
+        uint256 future = ROUND + 2;
+        _seedRoundPool(future, lpAda, LIQ);
+
+        uint256 quoted = market.quoteBetYes(future, 1_000e18);
+        vm.prank(alice);
+        assertEq(market.betYes(future, 1_000e18, quoted, NO_DEADLINE), quoted, "future-round quote == execution");
+
+        vm.startPrank(bob);
+        market.mintSets(future, 50e18);
+        market.redeemSets(future, 20e18);
+        vm.stopPrank();
+        (uint256 yes, uint256 no) = market.balancesOf(future, bob);
+        assertEq(yes, 30e18);
+        assertEq(no, 30e18);
+
+        // Liquidity management is equally open pre-round.
+        vm.prank(lpBen);
+        uint256 benShares = market.addLiquidity(future, LIQ / 2, 300, 0, 0, NO_DEADLINE);
+        vm.prank(lpBen);
+        market.removeLiquidity(future, benShares, 0, 0, NO_DEADLINE);
+    }
+
+    function test_futureRoundNeverResolvableNorDecided() public {
+        uint256 future = ROUND + 2;
+        _seedRoundPool(future, lpAda, LIQ);
+
+        // However the surrounding data moves, nothing about a future round is
+        // certain: not even hostile game values can halt or resolve it.
+        game.setNumBids(ROUND, 10_000);
+        game.setNumBids(future - 1, 123_456);
+        assertFalse(_state(future).outcomeDecided);
+        vm.expectRevert(GestureSeriesMarket.NotResolvable.selector);
+        market.resolve(future);
+
+        vm.prank(alice);
+        market.betNo(future, 100e18, 0, NO_DEADLINE); // trading never halted
+    }
+
+    function test_thresholdLocksOnFirstTouchViaAdd() public {
+        uint256 future = ROUND + 1;
+        _seedRoundPool(future, lpAda, LIQ);
+        assertFalse(_state(future).thresholdKnown);
+
+        _endRoundWith(950); // ROUND ends with 950; `future` is now current
+
+        vm.expectEmit(true, false, false, true);
+        emit GestureSeriesMarket.ThresholdLocked(future, 950);
+        vm.prank(lpBen);
+        market.addLiquidity(future, 1_000e18, FEE, 0, 0, NO_DEADLINE);
+
+        RoundView memory v = _state(future);
+        assertTrue(v.thresholdKnown);
+        assertEq(v.threshold, 950, "locked at the previous round's final count");
+    }
+
+    function test_thresholdLocksOnFirstTouchViaBet() public {
+        uint256 future = ROUND + 1;
+        _seedRoundPool(future, lpAda, LIQ);
+        _endRoundWith(950);
+
+        vm.expectEmit(true, false, false, true);
+        emit GestureSeriesMarket.ThresholdLocked(future, 950);
+        vm.prank(alice);
+        market.betYes(future, 100e18, 0, NO_DEADLINE);
+        assertEq(_state(future).threshold, 950);
+    }
+
+    function test_thresholdLocksLazilyAtResolveIfNeverTouched() public {
+        uint256 future = ROUND + 1;
+        _seedRoundPool(future, lpAda, LIQ);
+        vm.prank(alice);
+        market.betYes(future, 500e18, 0, NO_DEADLINE); // position taken pre-round
+
+        // ROUND ends at 950; `future` runs to 1000 and ends; two more rounds
+        // pass — all without anyone touching this market.
+        _endRoundWith(950);
+        game.setNumBids(future, 1_000);
+        game.setRoundNum(future + 3);
+
+        vm.expectEmit(true, false, false, true);
+        emit GestureSeriesMarket.ThresholdLocked(future, 950);
+        market.resolve(future);
+        RoundView memory v = _state(future);
+        assertTrue(v.resolved);
+        assertTrue(v.yesWon, "1000 > 950");
+        assertEq(v.threshold, 950, "lazy lock reads the identical final value");
+
+        (uint256 aliceYes,) = market.balancesOf(future, alice);
+        vm.prank(alice);
+        assertEq(market.claim(future), aliceYes);
+    }
+
+    function test_futureRoundFullLifecycleConservesCst() public {
+        uint256 future = ROUND + 1;
+        // Phase 1 (future): positions taken before the round exists.
+        _seedRoundPool(future, lpAda, LIQ);
+        vm.prank(alice);
+        market.betYes(future, 3_000e18, 0, NO_DEADLINE);
+
+        // Phase 2 (current): threshold reveals at 700; more trading.
+        _endRoundWith(700);
+        vm.prank(bob);
+        market.betNo(future, 2_000e18, 0, NO_DEADLINE);
+
+        // Phase 3 (past): the round ends below the bar; NO wins.
+        game.setNumBids(future, 650);
+        game.setRoundNum(future + 1);
+        market.resolve(future);
+
+        address[3] memory everyone = [lpAda, alice, bob];
+        for (uint256 i = 0; i < everyone.length; i++) {
+            uint256 shares = _lpShares(future, everyone[i]);
+            if (shares > 0) {
+                vm.prank(everyone[i]);
+                market.removeLiquidity(future, shares, 0, 0, NO_DEADLINE);
+            }
+            vm.prank(everyone[i]);
+            market.claimFees(future);
+            vm.prank(everyone[i]);
+            market.claim(future);
+        }
+        assertLt(cst.balanceOf(address(market)), 1e6, "cross-phase lifecycle left more than dust");
+    }
+
+    function test_farFutureRoundFundTradeAndExitInKind() public {
+        uint256 far = ROUND + 1_000;
+        _seedRoundPool(far, lpAda, LIQ);
+        vm.prank(alice);
+        market.betYes(far, 1_000e18, 0, NO_DEADLINE);
+
+        vm.expectRevert(GestureSeriesMarket.NotResolvable.selector);
+        market.resolve(far);
+
+        // Everyone can leave in-kind long before the round ever arrives.
+        vm.startPrank(lpAda);
+        market.removeLiquidity(far, _lpShares(far, lpAda), 0, 0, NO_DEADLINE);
+        market.claimFees(far);
+        (uint256 yes, uint256 no) = market.balancesOf(far, lpAda);
+        market.redeemSets(far, yes < no ? yes : no);
+        vm.stopPrank();
+
+        // The one-sided bettor exits by buying the other side (works even
+        // against the dust left after the LP is gone) and redeeming pairs.
+        vm.startPrank(alice);
+        market.betNo(far, 1_100e18, 0, NO_DEADLINE);
+        (yes, no) = market.balancesOf(far, alice);
+        market.redeemSets(far, yes < no ? yes : no);
+        vm.stopPrank();
+    }
+
+    function test_roundOneFundableDuringRoundZero() public {
+        game.setRoundNum(0);
+        vm.prank(lpAda);
+        market.addLiquidity(1, LIQ, FEE, 5_000, 0, NO_DEADLINE); // round 1 as a future round
+        assertFalse(_state(1).thresholdKnown);
+
+        game.setNumBids(0, 42); // round 0 gathers gestures...
+        game.setRoundNum(1); // ...and ends
+        vm.prank(alice);
+        market.betYes(1, 100e18, 0, NO_DEADLINE);
+        assertEq(_state(1).threshold, 42, "round 1 compares against round 0's final count");
+    }
+
+    function test_multipleRoundsTradeConcurrentlyAndStayIsolated() public {
+        _seedPool(LIQ); // current
+        uint256 f1 = ROUND + 1;
+        uint256 f2 = ROUND + 7;
+        _seedRoundPool(f1, lpBen, LIQ / 2);
+        vm.prank(carol);
+        market.addLiquidity(f2, LIQ / 4, 900, 2_000, 0, NO_DEADLINE);
+
+        vm.startPrank(alice);
+        market.betYes(ROUND, 1_000e18, 0, NO_DEADLINE);
+        market.betNo(f1, 500e18, 0, NO_DEADLINE);
+        market.betYes(f2, 250e18, 0, NO_DEADLINE);
+        vm.stopPrank();
+
+        assertEq(market.currentFeeBps(ROUND), FEE);
+        assertEq(market.currentFeeBps(f1), FEE);
+        assertEq(market.currentFeeBps(f2), 900);
+        (uint256 rY1,) = _reserves(f1);
+
+        // Resolving the current round leaves the future books untouched.
+        _endRoundWith(THRESHOLD + 1);
+        market.resolve(ROUND);
+        (uint256 rY1After,) = _reserves(f1);
+        assertEq(rY1After, rY1, "future pool moved by another round's resolution");
+        assertFalse(_state(f1).resolved);
+        assertTrue(_state(f2).initialized, "future markets persist");
     }
 }
