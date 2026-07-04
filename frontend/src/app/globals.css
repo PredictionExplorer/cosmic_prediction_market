@@ -68,6 +68,13 @@ html {
   color-scheme: dark;
 }
 
+/* Smooth in-page anchor jumps (FAQ category nav), unless motion is reduced. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
 body {
   background-color: var(--color-space);
   color: var(--color-ink);

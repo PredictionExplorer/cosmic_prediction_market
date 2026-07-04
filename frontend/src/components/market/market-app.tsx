@@ -7,19 +7,20 @@ import { useMarketActions } from "@/hooks/use-market-actions";
 import { totalVolume, useMarketEvents } from "@/hooks/use-market-events";
 import { appConfig } from "@/lib/config";
 import { replayRound } from "@/lib/history";
-import { canAddLiquidity, isResolvable, roundPhase } from "@/lib/market";
+import { canAddLiquidity, hasLpPosition, isResolvable, roundPhase } from "@/lib/market";
 import type { Address } from "viem";
 import { Footer } from "@/components/layout/footer";
 import { WalletModal } from "@/components/wallet/wallet-modal";
 import { ActivityFeed } from "./activity-feed";
 import { BetPanel } from "./bet-panel";
-import { MarketError, MarketSkeleton } from "./empty-states";
+import { BetClosed, MarketError, MarketSkeleton } from "./empty-states";
 import { HowItWorks } from "./how-it-works";
 import { LiquidityPanel } from "./liquidity-panel";
 import { MarketHero } from "./market-hero";
 import { PositionPanel } from "./position-panel";
 import { ResolveBanner } from "./resolve-banner";
 import { RoundNav } from "./round-nav";
+import { defaultSidePanelTab, SidePanelTabs } from "./side-panel-tabs";
 import { StatsGrid } from "./stats-grid";
 
 interface MarketAppProps {
@@ -79,40 +80,52 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
         </div>
 
         <div className="space-y-6">
-          {(phase === "live" || phase === "future") && (
-            <BetPanel
-              pool={snapshot.pool}
-              balance={connected && user ? user.cstBalance : null}
-              allowance={connected && user ? user.cstAllowance : null}
-              pendingAction={actions.pending === "approve" || actions.pending === "bet" ? actions.pending : null}
-              onConnect={() => setWalletModalOpen(true)}
-              onApprove={(amount) => actions.approve(snapshot.cstAddress, amount)}
-              onBet={actions.bet}
-            />
-          )}
-          <LiquidityPanel
-            pool={snapshot.pool}
-            lpShares={user?.lpShares ?? 0n}
-            lpPendingFees={user?.lpPendingFees ?? 0n}
-            lpDeclaredFeeBps={user?.lpDeclaredFeeBps ?? 0}
-            canAdd={canAddLiquidity(snapshot)}
-            balance={connected && user ? user.cstBalance : null}
-            allowance={connected && user ? user.cstAllowance : null}
-            pendingAction={
-              actions.pending === "approve" ||
-              actions.pending === "addLiquidity" ||
-              actions.pending === "removeLiquidity" ||
-              actions.pending === "updateFee" ||
-              actions.pending === "claimFees"
-                ? actions.pending
-                : null
+          <SidePanelTabs
+            // Remount on round navigation so each round opens on its own default tab.
+            key={snapshot.roundId.toString()}
+            defaultTab={defaultSidePanelTab(phase)}
+            lpIndicator={user !== null && hasLpPosition(user)}
+            bet={
+              phase === "live" || phase === "future" ? (
+                <BetPanel
+                  pool={snapshot.pool}
+                  balance={connected && user ? user.cstBalance : null}
+                  allowance={connected && user ? user.cstAllowance : null}
+                  pendingAction={actions.pending === "approve" || actions.pending === "bet" ? actions.pending : null}
+                  onConnect={() => setWalletModalOpen(true)}
+                  onApprove={(amount) => actions.approve(snapshot.cstAddress, amount)}
+                  onBet={actions.bet}
+                />
+              ) : (
+                <BetClosed phase={phase} />
+              )
             }
-            onConnect={() => setWalletModalOpen(true)}
-            onApprove={(amount) => actions.approve(snapshot.cstAddress, amount)}
-            onAdd={actions.addLiquidity}
-            onRemove={actions.removeLiquidity}
-            onUpdateFee={actions.updateFeeDeclaration}
-            onClaimFees={actions.claimFees}
+            liquidity={
+              <LiquidityPanel
+                pool={snapshot.pool}
+                lpShares={user?.lpShares ?? 0n}
+                lpPendingFees={user?.lpPendingFees ?? 0n}
+                lpDeclaredFeeBps={user?.lpDeclaredFeeBps ?? 0}
+                canAdd={canAddLiquidity(snapshot)}
+                balance={connected && user ? user.cstBalance : null}
+                allowance={connected && user ? user.cstAllowance : null}
+                pendingAction={
+                  actions.pending === "approve" ||
+                  actions.pending === "addLiquidity" ||
+                  actions.pending === "removeLiquidity" ||
+                  actions.pending === "updateFee" ||
+                  actions.pending === "claimFees"
+                    ? actions.pending
+                    : null
+                }
+                onConnect={() => setWalletModalOpen(true)}
+                onApprove={(amount) => actions.approve(snapshot.cstAddress, amount)}
+                onAdd={actions.addLiquidity}
+                onRemove={actions.removeLiquidity}
+                onUpdateFee={actions.updateFeeDeclaration}
+                onClaimFees={actions.claimFees}
+              />
+            }
           />
           {user && connected && (
             <PositionPanel

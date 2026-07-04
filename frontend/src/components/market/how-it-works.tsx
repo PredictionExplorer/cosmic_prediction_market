@@ -1,4 +1,5 @@
-import { Award, Droplets, Repeat, Telescope, Timer } from "lucide-react";
+import { ArrowRight, Award, Droplets, Repeat, Telescope, Timer } from "lucide-react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 
 const STEPS = [
@@ -33,9 +34,19 @@ const STEPS = [
 export function HowItWorks() {
   return (
     <section aria-labelledby="how-it-works-title" data-testid="how-it-works">
-      <h2 id="how-it-works-title" className="font-display text-lg font-semibold">
-        How it works
-      </h2>
+      <div className="flex items-baseline justify-between gap-4">
+        <h2 id="how-it-works-title" className="font-display text-lg font-semibold">
+          How it works
+        </h2>
+        <Link
+          href="/faq"
+          className="flex items-center gap-1 text-xs font-medium text-nova-bright transition-colors hover:text-ink"
+          data-testid="how-it-works-faq-link"
+        >
+          Read the full FAQ
+          <ArrowRight className="size-3.5" aria-hidden />
+        </Link>
+      </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {STEPS.map((step, i) => (
           <Card key={step.title} className="p-5">

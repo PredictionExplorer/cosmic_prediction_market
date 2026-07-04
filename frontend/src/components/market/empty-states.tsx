@@ -1,6 +1,7 @@
 "use client";
 
-import { CircleAlert, Telescope } from "lucide-react";
+import { CircleAlert, PauseCircle, Telescope } from "lucide-react";
+import type { RoundPhase } from "@/lib/market";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,6 +43,30 @@ export function MarketSkeleton() {
       </div>
       <Skeleton className="h-120 rounded-2xl" />
     </div>
+  );
+}
+
+const BET_CLOSED_REASONS: Partial<Record<RoundPhase, string>> = {
+  uninitialized:
+    "Nobody has opened this round's pool yet. Betting starts as soon as the first liquidity arrives.",
+  decided:
+    "The gesture count already crossed the threshold — YES is certain and betting halted. The round can be resolved now.",
+  ended: "This round is over and awaiting resolution. You can still redeem paired tokens or withdraw liquidity.",
+  resolved: "This round is resolved. Winning tokens can be claimed from the position panel below.",
+};
+
+/** Shown on the bet tab for rounds that can no longer (or not yet) be bet on. */
+export function BetClosed({ phase }: { phase: RoundPhase }) {
+  return (
+    <Card className="p-5" data-testid="bet-closed">
+      <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
+        <PauseCircle className="size-4 text-ink-faint" aria-hidden />
+        Betting closed
+      </h2>
+      <p className="mt-4 rounded-xl border border-dashed border-line p-4 text-center text-xs leading-relaxed text-ink-faint">
+        {BET_CLOSED_REASONS[phase] ?? "Betting is not available for this round."}
+      </p>
+    </Card>
   );
 }
 

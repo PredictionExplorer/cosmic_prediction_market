@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { MarketError, MarketSkeleton, NoMarketConfigured } from "./empty-states";
+import { BetClosed, MarketError, MarketSkeleton, NoMarketConfigured } from "./empty-states";
 
 describe("empty states", () => {
   it("NoMarketConfigured explains both configuration paths", () => {
@@ -23,5 +23,19 @@ describe("empty states", () => {
     expect(screen.getByTestId("market-error")).toHaveTextContent("RPC unreachable");
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("BetClosed explains each closed phase in its own words", () => {
+    const expectations = [
+      ["uninitialized", /first liquidity/i],
+      ["decided", /yes is certain/i],
+      ["ended", /awaiting resolution/i],
+      ["resolved", /claimed/i],
+    ] as const;
+    for (const [phase, message] of expectations) {
+      const { unmount } = render(<BetClosed phase={phase} />);
+      expect(screen.getByTestId("bet-closed")).toHaveTextContent(message);
+      unmount();
+    }
   });
 });
