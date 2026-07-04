@@ -1,12 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import type { RoundPhase } from "@/lib/market";
-import { defaultSidePanelTab, SidePanelTabs, type SidePanelTabsProps } from "./side-panel-tabs";
+import { SidePanelTabs, type SidePanelTabsProps } from "./side-panel-tabs";
 
 function renderTabs(overrides: Partial<SidePanelTabsProps> = {}) {
   const props: SidePanelTabsProps = {
-    defaultTab: "bet",
     lpIndicator: false,
     bet: <div data-testid="bet-content">bet content</div>,
     liquidity: <div data-testid="liquidity-content">liquidity content</div>,
@@ -15,24 +13,8 @@ function renderTabs(overrides: Partial<SidePanelTabsProps> = {}) {
   return render(<SidePanelTabs {...props} />);
 }
 
-describe("defaultSidePanelTab", () => {
-  it("opens on betting exactly while betting is possible", () => {
-    const expected: Record<RoundPhase, "bet" | "liquidity"> = {
-      live: "bet",
-      future: "bet",
-      uninitialized: "liquidity",
-      decided: "liquidity",
-      ended: "liquidity",
-      resolved: "liquidity",
-    };
-    for (const [phase, tab] of Object.entries(expected)) {
-      expect(defaultSidePanelTab(phase as RoundPhase)).toBe(tab);
-    }
-  });
-});
-
 describe("SidePanelTabs", () => {
-  it("shows betting by default and keeps liquidity hidden but mounted", () => {
+  it("always opens on Place bet, keeping liquidity hidden but mounted", () => {
     renderTabs();
 
     expect(screen.getByTestId("bet-content")).toBeVisible();
@@ -42,12 +24,6 @@ describe("SidePanelTabs", () => {
     // Mounted (state survives tab flips) but not visible or announced.
     expect(screen.getByTestId("liquidity-content")).not.toBeVisible();
     expect(screen.getByTestId("side-panel-liquidity")).toHaveAttribute("hidden");
-  });
-
-  it("respects the liquidity default for closed rounds", () => {
-    renderTabs({ defaultTab: "liquidity" });
-    expect(screen.getByTestId("liquidity-content")).toBeVisible();
-    expect(screen.getByTestId("bet-content")).not.toBeVisible();
   });
 
   it("switches panels on click, both ways", async () => {
@@ -67,12 +43,7 @@ describe("SidePanelTabs", () => {
   it("preserves panel state across a tab round-trip (panels stay mounted)", async () => {
     const user = userEvent.setup();
     render(
-      <SidePanelTabs
-        defaultTab="bet"
-        lpIndicator={false}
-        bet={<input data-testid="bet-input" />}
-        liquidity={<div />}
-      />,
+      <SidePanelTabs lpIndicator={false} bet={<input data-testid="bet-input" />} liquidity={<div />} />,
     );
 
     await user.type(screen.getByTestId("bet-input"), "123");
@@ -122,9 +93,7 @@ describe("SidePanelTabs", () => {
     expect(screen.getByTestId("lp-tab-indicator")).toBeInTheDocument();
     expect(screen.getByText("(you have a liquidity position)")).toBeInTheDocument();
 
-    rerender(
-      <SidePanelTabs defaultTab="bet" lpIndicator={false} bet={<div />} liquidity={<div />} />,
-    );
+    rerender(<SidePanelTabs lpIndicator={false} bet={<div />} liquidity={<div />} />);
     expect(screen.queryByTestId("lp-tab-indicator")).not.toBeInTheDocument();
   });
 });

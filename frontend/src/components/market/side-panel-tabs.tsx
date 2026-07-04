@@ -1,22 +1,10 @@
 "use client";
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import type { RoundPhase } from "@/lib/market";
 
 export type SidePanelTab = "bet" | "liquidity";
 
-/**
- * Which tab a round opens on: betting whenever it's possible, otherwise
- * liquidity — on closed rounds the remaining actors are LPs withdrawing,
- * re-voting, or claiming fees.
- */
-export function defaultSidePanelTab(phase: RoundPhase): SidePanelTab {
-  return phase === "live" || phase === "future" ? "bet" : "liquidity";
-}
-
 export interface SidePanelTabsProps {
-  /** The tab selected on mount: betting when it's open, liquidity otherwise. */
-  defaultTab: SidePanelTab;
   /** Marks the Liquidity tab when the user has shares or unclaimed fees. */
   lpIndicator: boolean;
   bet: ReactNode;
@@ -29,13 +17,13 @@ const TABS: readonly { id: SidePanelTab; label: string }[] = [
 ];
 
 /**
- * The sidebar's primary switch between betting (the default focus of the app)
- * and liquidity provision (tucked away for the LP minority). A WAI-ARIA tabs
- * widget: roving tabindex, arrow-key navigation, panels stay mounted so
- * half-typed amounts survive a tab flip.
+ * The sidebar's primary switch between betting (the default focus of the app,
+ * always the opening tab) and liquidity provision (tucked away for the LP
+ * minority). A WAI-ARIA tabs widget: roving tabindex, arrow-key navigation,
+ * panels stay mounted so half-typed amounts survive a tab flip.
  */
-export function SidePanelTabs({ defaultTab, lpIndicator, bet, liquidity }: SidePanelTabsProps) {
-  const [active, setActive] = useState<SidePanelTab>(defaultTab);
+export function SidePanelTabs({ lpIndicator, bet, liquidity }: SidePanelTabsProps) {
+  const [active, setActive] = useState<SidePanelTab>("bet");
   const tabRefs = useRef(new Map<SidePanelTab, HTMLButtonElement>());
 
   const select = (tab: SidePanelTab) => {

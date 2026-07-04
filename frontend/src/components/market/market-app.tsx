@@ -20,7 +20,7 @@ import { MarketHero } from "./market-hero";
 import { PositionPanel } from "./position-panel";
 import { ResolveBanner } from "./resolve-banner";
 import { RoundNav } from "./round-nav";
-import { defaultSidePanelTab, SidePanelTabs } from "./side-panel-tabs";
+import { SidePanelTabs } from "./side-panel-tabs";
 import { StatsGrid } from "./stats-grid";
 
 interface MarketAppProps {
@@ -81,9 +81,9 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
 
         <div className="space-y-6">
           <SidePanelTabs
-            // Remount on round navigation so each round opens on its own default tab.
+            // Remount on round navigation so each round opens back on the bet
+            // tab, with no input state leaking between rounds.
             key={snapshot.roundId.toString()}
-            defaultTab={defaultSidePanelTab(phase)}
             lpIndicator={user !== null && hasLpPosition(user)}
             bet={
               phase === "live" || phase === "future" ? (
