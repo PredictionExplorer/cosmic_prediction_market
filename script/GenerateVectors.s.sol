@@ -32,8 +32,19 @@ contract GenerateVectors is Script {
         // Full-flow vectors: open -> bet -> join -> re-vote -> bet -> remove,
         // executed live against the contract.
         string memory flowsJson = _flowVectors();
+        // Lifecycle vectors: every round phase, with the GROUND TRUTH of
+        // which actions the contract actually accepts, probed live.
+        string memory lifecycleJson = _lifecycleVectors();
 
-        string memory json = string.concat("{\n\"buyAmount\": ", buyAmountJson, ",\n\"flows\": ", flowsJson, "\n}\n");
+        string memory json = string.concat(
+            "{\n\"buyAmount\": ",
+            buyAmountJson,
+            ",\n\"flows\": ",
+            flowsJson,
+            ",\n\"lifecycle\": ",
+            lifecycleJson,
+            "\n}\n"
+        );
         vm.writeFile("frontend/src/test/fixtures/contract-vectors.json", json);
     }
 
@@ -256,6 +267,263 @@ contract GenerateVectors is Script {
         game = new MockGame(address(cst));
         game.setRoundNum(ROUND);
         game.setNumBids(ROUND - 1, THRESHOLD);
+    }
+
+    // ------------------------------------------------------------------
+    // Lifecycle & gating vectors
+    // ------------------------------------------------------------------
+
+    address constant PROBER = address(0xCA11);
+    bool private lcFirst = true;
+    string private lcOut = "[";
+
+    /// @dev One record per lifecycle scenario: the full `roundState` tuple,
+    /// the pool, and the GROUND TRUTH of which actions the contract accepts
+    /// right now (probed with real calls on a state snapshot). The frontend's
+    /// phase/gating helpers are asserted against these bit for bit.
+    function _lifecycleVectors() internal returns (string memory) {
+        // Current round, nobody funded it yet.
+        _freshMarketWorld();
+        _record("currentUninitialized", ROUND);
+
+        // Current round, uninitialized, count already past the bar: the
+        // market can never be opened.
+        _freshMarketWorld();
+        game.setNumBids(ROUND, THRESHOLD + 1);
+        _record("currentUninitializedDecided", ROUND);
+
+        // Live: funded, counting below the threshold.
+        _freshMarketWorld();
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, 500);
+        _record("currentLive", ROUND);
+
+        // A tie at the threshold is still live (strictly greater required).
+        _freshMarketWorld();
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, THRESHOLD);
+        _record("tieAtThresholdStillLive", ROUND);
+
+        // Decided mid-round: YES certain, withdraw-only except mint/resolve.
+        _freshMarketWorld();
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, THRESHOLD + 1);
+        _record("currentDecided", ROUND);
+
+        // Ended, unresolved: frozen, resolvable.
+        _freshMarketWorld();
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, 750);
+        game.setRoundNum(ROUND + 1);
+        _record("endedUnresolved", ROUND);
+
+        // Resolved YES and NO.
+        _freshMarketWorld();
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, 900);
+        game.setRoundNum(ROUND + 1);
+        market.resolve(ROUND);
+        _record("resolvedYes", ROUND);
+
+        _freshMarketWorld();
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, 750);
+        game.setRoundNum(ROUND + 1);
+        market.resolve(ROUND);
+        _record("resolvedNo", ROUND);
+
+        // Early-resolved while the round still runs.
+        _freshMarketWorld();
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, THRESHOLD + 1);
+        market.resolve(ROUND);
+        _record("earlyResolvedYes", ROUND);
+
+        // Future round, uninitialized: fundable, nothing else.
+        _freshMarketWorld();
+        _record("futureUninitialized", ROUND + 2);
+
+        // Future round, funded and traded: threshold unknown, fully open.
+        _freshMarketWorld();
+        _openDefault(ROUND + 2);
+        vm.prank(ACTOR);
+        market.betYes(ROUND + 2, 100e18, 0, type(uint256).max);
+        _record("futureFunded", ROUND + 2);
+
+        // Far-future round: same rules, arbitrarily far ahead.
+        _freshMarketWorld();
+        _openDefault(ROUND + 1000);
+        _record("farFutureFunded", ROUND + 1000);
+
+        // Future pool rugged down to dead-share dust: still technically
+        // tradable and joinable (the AMM never fully empties).
+        _freshMarketWorld();
+        _openDefault(ROUND + 2);
+        vm.startPrank(ACTOR);
+        (uint256 lpShares,,) = market.lpPositionOf(ROUND + 2, ACTOR);
+        market.removeLiquidity(ROUND + 2, lpShares, 0, 0, type(uint256).max);
+        vm.stopPrank();
+        _record("futureDustAfterLpExit", ROUND + 2);
+
+        // Funded as future, now current: threshold knowable (not yet stored).
+        _freshMarketWorld();
+        _openDefault(ROUND + 1);
+        game.setNumBids(ROUND, 950);
+        game.setRoundNum(ROUND + 1);
+        _record("futureTurnedCurrent", ROUND + 1);
+
+        // Funded as future, whole life passed untouched: withdraw-only,
+        // lazily resolvable.
+        _freshMarketWorld();
+        _openDefault(ROUND + 1);
+        game.setNumBids(ROUND, 950);
+        game.setNumBids(ROUND + 1, 900);
+        game.setRoundNum(ROUND + 3);
+        _record("futureLifePassedUntouched", ROUND + 1);
+
+        // Past round, never initialized: dead forever.
+        _freshMarketWorld();
+        _record("pastUninitialized", ROUND - 4);
+
+        // Round 0 can never host a market; round 1 is fundable as a future
+        // round while round 0 still runs.
+        _freshMarketWorld();
+        game.setRoundNum(0);
+        game.setNumBids(0, 42);
+        _record("roundZeroDuringZero", 0);
+        _record("roundOneDuringZero", 1);
+
+        // Degenerate reveal: previous round ended with ZERO gestures, and
+        // the first gesture decides YES instantly.
+        _freshMarketWorld();
+        game.setNumBids(ROUND - 1, 0);
+        _openDefault(ROUND);
+        game.setNumBids(ROUND, 1);
+        _record("thresholdZeroInstantDecision", ROUND);
+
+        return string.concat(lcOut, "]");
+    }
+
+    function _freshMarketWorld() internal {
+        _freshWorld();
+        market = new GestureSeriesMarket(ICosmicSignatureGame(address(game)));
+        cst.mint(ACTOR, type(uint128).max);
+        cst.mint(PROBER, type(uint128).max);
+        vm.prank(ACTOR);
+        cst.approve(address(market), type(uint256).max);
+        vm.prank(PROBER);
+        cst.approve(address(market), type(uint256).max);
+    }
+
+    function _openDefault(uint256 roundId) internal {
+        vm.prank(ACTOR);
+        market.addLiquidity(roundId, 10_000e18, 200, 5_000, 0, type(uint256).max);
+    }
+
+    function _record(string memory name, uint256 roundId) internal {
+        string memory rec = string.concat(
+            '{"name":"',
+            name,
+            '"',
+            _lcIdsJson(roundId),
+            _lcStateJson(roundId),
+            _lcPoolJson(roundId),
+            _lcProbesJson(roundId),
+            "}"
+        );
+        lcOut = string.concat(lcOut, lcFirst ? "" : ",\n", rec);
+        lcFirst = false;
+    }
+
+    function _lcIdsJson(uint256 roundId) internal view returns (string memory) {
+        return string.concat(
+            ',"roundId":"',
+            vm.toString(roundId),
+            '","gameRoundNum":"',
+            vm.toString(game.roundNum()),
+            '","prevRoundCount":"',
+            vm.toString(roundId == 0 ? 0 : game.bidderAddresses(roundId - 1)),
+            '"'
+        );
+    }
+
+    function _lcStateJson(uint256 roundId) internal view returns (string memory json) {
+        (
+            bool initialized,
+            bool thresholdKnown,
+            bool resolved,
+            bool yesWon,
+            uint256 threshold,
+            uint256 currentCount,
+            bool roundActive,
+            bool outcomeDecided
+        ) = market.roundState(roundId);
+        json = string.concat(
+            ',"initialized":',
+            _bool(initialized),
+            ',"thresholdKnown":',
+            _bool(thresholdKnown),
+            ',"resolved":',
+            _bool(resolved),
+            ',"yesWon":',
+            _bool(yesWon),
+            ',"roundActive":',
+            _bool(roundActive),
+            ',"outcomeDecided":',
+            _bool(outcomeDecided)
+        );
+        json = string.concat(
+            json, ',"threshold":"', vm.toString(threshold), '","currentCount":"', vm.toString(currentCount), '"'
+        );
+    }
+
+    function _lcProbesJson(uint256 roundId) internal returns (string memory) {
+        return string.concat(
+            ',"canAddLiquidity":',
+            _probe(abi.encodeCall(market.addLiquidity, (roundId, 10e18, 200, 5_000, 0, type(uint256).max))),
+            ',"canBet":',
+            _probe(abi.encodeCall(market.betYes, (roundId, 1e18, 0, type(uint256).max))),
+            ',"canMintSets":',
+            _probe(abi.encodeCall(market.mintSets, (roundId, 1e18))),
+            ',"canResolve":',
+            _probe(abi.encodeCall(market.resolve, (roundId))),
+            ',"canClaim":',
+            _probe(abi.encodeCall(market.claim, (roundId)))
+        );
+    }
+
+    /// @dev Executes a real call as PROBER against a state snapshot, records
+    /// success/revert, and rolls the state back — pure ground truth.
+    function _probe(bytes memory callData) internal returns (string memory) {
+        uint256 snap = vm.snapshotState();
+        vm.prank(PROBER);
+        (bool ok,) = address(market).call(callData);
+        vm.revertToState(snap);
+        return _bool(ok);
+    }
+
+    function _bool(bool v) internal pure returns (string memory) {
+        return v ? "true" : "false";
+    }
+
+    function _lcPoolJson(uint256 roundId) internal view returns (string memory) {
+        (uint256 rY, uint256 rN, uint256 totalShares, uint256 acc, uint256 feeReserve, uint256 feeWeight,) =
+            market.pool(roundId);
+        return string.concat(
+            ',"poolReserveYes":"',
+            vm.toString(rY),
+            '","poolReserveNo":"',
+            vm.toString(rN),
+            '","poolTotalShares":"',
+            vm.toString(totalShares),
+            '","poolAccFeePerShare":"',
+            vm.toString(acc),
+            '","poolFeeReserve":"',
+            vm.toString(feeReserve),
+            '","poolFeeWeight":"',
+            vm.toString(feeWeight),
+            '"'
+        );
     }
 }
 

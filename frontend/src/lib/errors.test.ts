@@ -28,7 +28,7 @@ describe("describeTxError", () => {
   });
 
   it("maps every contract error name to a specific explanation", () => {
-    expect(describeTxError(revertError("RoundNotActive"))).toMatch(/no longer live/i);
+    expect(describeTxError(revertError("RoundNotActive"))).toMatch(/already over/i);
     expect(describeTxError(revertError("RoundNotInitialized"))).toMatch(/hasn't been opened/i);
     expect(describeTxError(revertError("OutcomeDecided"))).toMatch(/crossed the threshold/i);
     expect(describeTxError(revertError("NotResolvable"))).toMatch(/isn't known yet/i);

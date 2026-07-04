@@ -2,11 +2,13 @@ import { BaseError, ContractFunctionRevertedError, UserRejectedRequestError } fr
 
 /** Human explanations for every custom error the series market can revert with. */
 const CONTRACT_ERRORS: Record<string, string> = {
-  RoundNotActive: "This round is no longer live — trading and liquidity are closed for it.",
+  RoundNotActive:
+    "This round is already over — trading and liquidity are closed for it. Withdrawals, redemptions and claims still work.",
   RoundNotInitialized: "This round's market hasn't been opened yet. Adding liquidity opens it.",
   OutcomeDecided:
     "The gesture count already crossed the threshold, so YES has won — betting and adding liquidity are closed. The round can be resolved now.",
-  NotResolvable: "The outcome isn't known yet — the round is live and the count hasn't crossed the threshold.",
+  NotResolvable:
+    "The outcome isn't known yet — either the round hasn't started, or it's live and the count hasn't crossed the threshold.",
   AlreadyResolved: "This round has already been resolved.",
   NotResolved: "This round hasn't been resolved yet — resolve it first, then claim.",
   Slippage:

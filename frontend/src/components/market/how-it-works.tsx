@@ -1,4 +1,4 @@
-import { Award, Droplets, Repeat, Timer } from "lucide-react";
+import { Award, Droplets, Repeat, Telescope, Timer } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 const STEPS = [
@@ -8,6 +8,11 @@ const STEPS = [
     body: "Will this Cosmic Signature round end with more gestures (bids) than the previous one? YES pays 1 CST per token if it does, NO pays 1 CST if it doesn't (a tie counts as NO). A new market opens itself every round.",
   },
   {
+    icon: Telescope,
+    title: "Bet ahead on future rounds",
+    body: "Any future round is open for early positions — fund it, bet it, exit it. Its threshold (last round's final count) locks the moment its round arrives; until then the bar is still forming, in public.",
+  },
+  {
     icon: Droplets,
     title: "The fee is an LP vote",
     body: "One pool per round. Every LP declares the fee they want; bettors pay the share-weighted average, and fee earnings split pro rata by shares. Re-vote or withdraw any time.",
@@ -15,7 +20,7 @@ const STEPS = [
   {
     icon: Timer,
     title: "No betting on known outcomes",
-    body: "The gesture count is public and only goes up. The instant it crosses last round's count, YES is certain: betting halts in the same block and anyone can resolve early. Round over works the same way.",
+    body: "The gesture count is public and only goes up. The instant it crosses last round's count, YES is certain: betting halts in the same block and anyone can resolve early. Once a round is over it's withdraw-only, forever.",
   },
   {
     icon: Award,
@@ -31,7 +36,7 @@ export function HowItWorks() {
       <h2 id="how-it-works-title" className="font-display text-lg font-semibold">
         How it works
       </h2>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {STEPS.map((step, i) => (
           <Card key={step.title} className="p-5">
             <div className="flex items-center gap-2.5">

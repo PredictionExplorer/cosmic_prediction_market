@@ -12,7 +12,18 @@ import type { BetSide } from "@/lib/math";
 
 /** Any round event, normalized for the activity feed. */
 export interface ActivityEvent {
-  readonly kind: "bet" | "add" | "remove" | "feeVote" | "feesClaimed" | "mint" | "redeem" | "resolved" | "claimed";
+  readonly kind:
+    | "bet"
+    | "add"
+    | "remove"
+    | "feeVote"
+    | "feesClaimed"
+    | "mint"
+    | "redeem"
+    | "resolved"
+    | "claimed"
+    | "roundInitialized"
+    | "thresholdLocked";
   readonly blockNumber: bigint;
   readonly logIndex: number;
   readonly transactionHash: `0x${string}`;
@@ -37,7 +48,9 @@ interface EventScan {
 /** How many of the newest events get real block timestamps (1 RPC call per block). */
 const TIMESTAMPED_BLOCKS = 30;
 
-function decodeScan(logs: Log[], roundId: bigint): EventScan {
+/** Decodes a raw log scan into activity + pool-replay events for one round.
+ * Exported for testing: the mapping is pure and fuzz-tested. */
+export function decodeScan(logs: Log[], roundId: bigint): EventScan {
   const parsed = parseEventLogs({ abi: gestureSeriesMarketAbi, logs });
   const activity: ActivityEvent[] = [];
   const poolEvents: PoolEvent[] = [];
@@ -164,6 +177,18 @@ function decodeScan(logs: Log[], roundId: bigint): EventScan {
         if (log.args.cstOut > 0n) {
           activity.push({ ...base, kind: "claimed", user: log.args.user, amount: log.args.cstOut, secondary: 0n });
         }
+        break;
+      case "RoundInitialized":
+        activity.push({ ...base, kind: "roundInitialized", user: null, amount: 0n, secondary: 0n });
+        break;
+      case "ThresholdLocked":
+        activity.push({
+          ...base,
+          kind: "thresholdLocked",
+          user: null,
+          amount: 0n,
+          secondary: log.args.threshold,
+        });
         break;
     }
   }

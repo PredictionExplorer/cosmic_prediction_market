@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { RoundSnapshot } from "./market";
 import {
   canAddLiquidity,
+  canClaim,
+  canMintSets,
   displayedProbability,
   hasLpPosition,
   hasPosition,
@@ -24,11 +26,13 @@ function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
     seriesAddress: SERIES,
     roundId: 5n,
     initialized: true,
+    thresholdKnown: true,
     resolved: false,
     yesWon: false,
     threshold: 800n,
     currentCount: 500n,
     gameRoundNum: 5n,
+    prevRoundCount: 800n,
     pool: {
       // NO-heavy pool: P(YES) = 3000/(1000+3000) = 75%.
       reserveYes: 1_000n * ONE,
@@ -44,9 +48,23 @@ function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
   };
 }
 
+/** A round funded ahead of time: the game hasn't reached it, no threshold. */
+function futureSnapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
+  return snapshot({
+    roundId: 7n,
+    gameRoundNum: 5n,
+    thresholdKnown: false,
+    threshold: 0n,
+    currentCount: 0n,
+    prevRoundCount: 640n, // round 6's count so far — the forming threshold
+    ...overrides,
+  });
+}
+
 describe("roundPhase", () => {
   it("walks the full lifecycle", () => {
     expect(roundPhase(snapshot({ initialized: false }))).toBe("uninitialized");
+    expect(roundPhase(futureSnapshot())).toBe("future");
     expect(roundPhase(snapshot())).toBe("live");
     expect(roundPhase(snapshot({ currentCount: 801n }))).toBe("decided");
     expect(roundPhase(snapshot({ gameRoundNum: 6n }))).toBe("ended");
@@ -60,41 +78,83 @@ describe("roundPhase", () => {
   it("resolved wins over everything else", () => {
     expect(roundPhase(snapshot({ resolved: true, gameRoundNum: 9n, currentCount: 10_000n }))).toBe("resolved");
   });
+
+  it("a future round can never be decided, whatever the counts claim", () => {
+    // The threshold isn't knowable, so certainty is impossible pre-round.
+    expect(roundPhase(futureSnapshot({ currentCount: 10_000n }))).toBe("future");
+  });
+
+  it("an unknown threshold never triggers decided even on the current round", () => {
+    // Defensive: the contract always knows the threshold for current rounds,
+    // but the guard must sit on thresholdKnown, not on the raw comparison.
+    expect(roundPhase(snapshot({ thresholdKnown: false, threshold: 0n, currentCount: 5n }))).toBe("live");
+  });
 });
 
 describe("tradability and resolvability", () => {
-  it("only live rounds with a funded pool are tradable", () => {
+  it("live and future rounds with a funded pool are tradable", () => {
     expect(isTradable(snapshot())).toBe(true);
+    expect(isTradable(futureSnapshot())).toBe(true);
     expect(isTradable(snapshot({ pool: { ...snapshot().pool, totalShares: 0n } }))).toBe(false);
+    expect(isTradable(futureSnapshot({ pool: { ...snapshot().pool, totalShares: 0n } }))).toBe(false);
     expect(isTradable(snapshot({ currentCount: 801n }))).toBe(false);
     expect(isTradable(snapshot({ gameRoundNum: 6n }))).toBe(false);
     expect(isTradable(snapshot({ resolved: true }))).toBe(false);
   });
 
-  it("decided and ended rounds are resolvable", () => {
+  it("decided and ended rounds are resolvable; future rounds never are", () => {
     expect(isResolvable(snapshot())).toBe(false);
     expect(isResolvable(snapshot({ currentCount: 801n }))).toBe(true);
     expect(isResolvable(snapshot({ gameRoundNum: 6n }))).toBe(true);
     expect(isResolvable(snapshot({ resolved: true }))).toBe(false);
+    expect(isResolvable(futureSnapshot())).toBe(false);
+    expect(isResolvable(futureSnapshot({ currentCount: 10_000n }))).toBe(false);
   });
 
-  it("canAddLiquidity: live rounds, or open-able uninitialized current rounds", () => {
+  it("canAddLiquidity: live and future rounds, or open-able uninitialized ones", () => {
     expect(canAddLiquidity(snapshot())).toBe(true);
     expect(canAddLiquidity(snapshot({ initialized: false }))).toBe(true);
+    // Any future round can be opened or joined — arbitrarily far ahead.
+    expect(canAddLiquidity(futureSnapshot())).toBe(true);
+    expect(canAddLiquidity(futureSnapshot({ initialized: false }))).toBe(true);
+    expect(canAddLiquidity(futureSnapshot({ initialized: false, roundId: 1_000n }))).toBe(true);
     // Uninitialized but the count already crossed: opening would revert.
     expect(canAddLiquidity(snapshot({ initialized: false, currentCount: 801n }))).toBe(false);
-    // Uninitialized past/future rounds can't be opened.
+    // Past rounds can never be opened.
     expect(canAddLiquidity(snapshot({ initialized: false, gameRoundNum: 6n }))).toBe(false);
     // Round 0 has no previous round.
     expect(canAddLiquidity(snapshot({ initialized: false, roundId: 0n, gameRoundNum: 0n }))).toBe(false);
     expect(canAddLiquidity(snapshot({ currentCount: 801n }))).toBe(false);
     expect(canAddLiquidity(snapshot({ resolved: true }))).toBe(false);
+    // Ended rounds are withdraw-only, even for existing LPs.
+    expect(canAddLiquidity(snapshot({ gameRoundNum: 6n }))).toBe(false);
+  });
+
+  it("canMintSets: open while the market exists and the round isn't over", () => {
+    expect(canMintSets(snapshot())).toBe(true);
+    expect(canMintSets(futureSnapshot())).toBe(true);
+    // Minting stays open on decided rounds: a set is value-neutral.
+    expect(canMintSets(snapshot({ currentCount: 801n }))).toBe(true);
+    expect(canMintSets(snapshot({ initialized: false }))).toBe(false);
+    expect(canMintSets(snapshot({ gameRoundNum: 6n }))).toBe(false);
+    expect(canMintSets(snapshot({ resolved: true }))).toBe(false);
+  });
+
+  it("canClaim: exactly the resolved phase", () => {
+    expect(canClaim(snapshot({ resolved: true }))).toBe(true);
+    expect(canClaim(snapshot())).toBe(false);
+    expect(canClaim(futureSnapshot())).toBe(false);
+    expect(canClaim(snapshot({ gameRoundNum: 6n }))).toBe(false);
   });
 });
 
 describe("displayedProbability", () => {
   it("reads the pool while live", () => {
     expect(displayedProbability(snapshot())).toBeCloseTo(0.75);
+  });
+
+  it("reads the pool for future rounds too — early positions have a price", () => {
+    expect(displayedProbability(futureSnapshot())).toBeCloseTo(0.75);
   });
 
   it("pins to 1 when decided and to the winner when resolved", () => {

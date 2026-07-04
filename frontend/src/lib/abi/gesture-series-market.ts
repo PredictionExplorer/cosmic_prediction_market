@@ -484,6 +484,11 @@ export const gestureSeriesMarketAbi = [
         "internalType": "bool"
       },
       {
+        "name": "thresholdKnown",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "resolved",
         "type": "bool",
         "internalType": "bool"
@@ -778,6 +783,19 @@ export const gestureSeriesMarketAbi = [
   {
     "type": "event",
     "name": "RoundInitialized",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ThresholdLocked",
     "inputs": [
       {
         "name": "roundId",

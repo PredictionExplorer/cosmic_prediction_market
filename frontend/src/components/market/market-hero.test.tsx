@@ -11,11 +11,13 @@ function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
     seriesAddress: SERIES,
     roundId: 5n,
     initialized: true,
+    thresholdKnown: true,
     resolved: false,
     yesWon: false,
     threshold: 800n,
     currentCount: 500n,
     gameRoundNum: 5n,
+    prevRoundCount: 800n,
     pool: {
       // NO-heavy pool: P(YES) = 3000/(1000+3000) = 75%.
       reserveYes: 1_000n * ONE,
@@ -62,5 +64,46 @@ describe("MarketHero", () => {
     render(<MarketHero snapshot={snapshot({ resolved: true, yesWon: false, gameRoundNum: 6n })} history={[]} />);
     expect(screen.getByTestId("hero-probability")).toHaveTextContent("0.0%");
     expect(screen.getByText(/Resolved: NO/i)).toBeInTheDocument();
+  });
+
+  it("presents a next-round future market with its forming threshold", () => {
+    render(
+      <MarketHero
+        snapshot={snapshot({
+          roundId: 6n,
+          gameRoundNum: 5n,
+          thresholdKnown: false,
+          threshold: 0n,
+          currentCount: 0n,
+          prevRoundCount: 640n,
+        })}
+        history={[]}
+      />,
+    );
+    expect(screen.getByTestId("phase-badge")).toHaveTextContent(/future round/i);
+    expect(screen.getByTestId("hero-threshold-forming")).toHaveTextContent(/640/);
+    expect(screen.getByTestId("hero-threshold-forming")).toHaveTextContent(/round 5/i);
+    // The pool still prices the market: early positions have a live number.
+    expect(screen.getByTestId("hero-probability")).toHaveTextContent("75.0%");
+    // No race to a meaningless zero — the pending strip renders instead.
+    expect(screen.getByTestId("race-pending")).toBeInTheDocument();
+  });
+
+  it("tells far-future visitors when their threshold will lock", () => {
+    render(
+      <MarketHero
+        snapshot={snapshot({
+          roundId: 9n,
+          gameRoundNum: 5n,
+          thresholdKnown: false,
+          threshold: 0n,
+          currentCount: 0n,
+          prevRoundCount: 0n,
+        })}
+        history={[]}
+      />,
+    );
+    expect(screen.getByTestId("hero-threshold-unknown")).toHaveTextContent(/locks when round 8 ends/i);
+    expect(screen.queryByTestId("hero-threshold")).not.toBeInTheDocument();
   });
 });

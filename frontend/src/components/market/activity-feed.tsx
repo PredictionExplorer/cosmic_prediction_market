@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CheckCheck, Droplets, Flag, HandCoins, Layers, Undo2, Vote, Waves, X } from "lucide-react";
+import { Check, CheckCheck, Droplets, Flag, HandCoins, Layers, Lock, Sparkles, Undo2, Vote, Waves, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ActivityEvent } from "@/hooks/use-market-events";
 import { formatBps, formatCount, formatCst, timeAgo } from "@/lib/format";
@@ -113,6 +113,21 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
         text: (
           <>
             claimed <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span>
+          </>
+        ),
+      };
+    case "roundInitialized":
+      return {
+        icon: iconBubble("nova", <Sparkles className="size-3.5" aria-hidden />),
+        text: <>market opened for this round</>,
+      };
+    case "thresholdLocked":
+      return {
+        icon: iconBubble("ended", <Lock className="size-3.5" aria-hidden />),
+        text: (
+          <>
+            threshold locked at{" "}
+            <span className="font-mono font-semibold text-ended">{formatCount(event.secondary)} gestures</span>
           </>
         ),
       };

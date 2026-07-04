@@ -12,11 +12,13 @@ function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
     seriesAddress: SERIES,
     roundId: 5n,
     initialized: true,
+    thresholdKnown: true,
     resolved: false,
     yesWon: false,
     threshold: 800n,
     currentCount: 500n,
     gameRoundNum: 5n,
+    prevRoundCount: 800n,
     pool: {
       reserveYes: 1_000n * ONE,
       reserveNo: 1_000n * ONE,
@@ -98,5 +100,24 @@ describe("PositionPanel", () => {
   it("shows zero claimable when the user lost", () => {
     renderPanel({ snapshot: snapshot({ resolved: true, yesWon: false }) });
     expect(screen.getByTestId("claim-button")).toHaveTextContent("40");
+  });
+
+  it("future-round positions mark at the pool price and stay redeemable", async () => {
+    const u = userEvent.setup();
+    const { props } = renderPanel({
+      snapshot: snapshot({
+        roundId: 7n,
+        gameRoundNum: 5n,
+        thresholdKnown: false,
+        threshold: 0n,
+        currentCount: 0n,
+        prevRoundCount: 640n,
+      }),
+    });
+    // 50% pool: value = 100*0.5 + 40*0.5 = 70, same as live.
+    expect(screen.getByTestId("position-value")).toHaveTextContent("70");
+    expect(screen.queryByTestId("claim-button")).not.toBeInTheDocument();
+    await u.click(screen.getByTestId("redeem-button"));
+    expect(props.onRedeemSets).toHaveBeenCalledWith(40n * ONE);
   });
 });

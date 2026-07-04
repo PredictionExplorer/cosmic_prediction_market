@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Radio } from "lucide-react";
+import { ChevronLeft, ChevronRight, Radio, Telescope } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
@@ -12,8 +12,8 @@ interface RoundNavProps {
 
 /**
  * Navigate between rounds of the series via the `?round=` query param.
- * Past rounds stay claimable forever; "Live" jumps back to following the
- * game's current round.
+ * Past rounds stay claimable forever, ANY future round is open for early
+ * positions, and "Live" jumps back to following the game's current round.
  */
 export function RoundNav({ roundId, currentRound }: RoundNavProps) {
   const router = useRouter();
@@ -32,6 +32,7 @@ export function RoundNav({ roundId, currentRound }: RoundNavProps) {
   );
 
   const onLive = currentRound !== null && roundId === currentRound;
+  const isFuture = currentRound !== null && roundId > currentRound;
 
   return (
     <nav className="flex items-center justify-between" aria-label="Round navigation" data-testid="round-nav">
@@ -49,6 +50,15 @@ export function RoundNav({ roundId, currentRound }: RoundNavProps) {
         <span className="font-display font-semibold text-ink" data-testid="round-current">
           Round {roundId.toString()}
         </span>
+        {isFuture && (
+          <span
+            data-testid="round-future"
+            className="flex items-center gap-1 rounded-full border border-nova/40 bg-nova/10 px-2.5 py-0.5 text-[11px] font-semibold text-nova-bright"
+          >
+            <Telescope className="size-3" aria-hidden />
+            Future
+          </span>
+        )}
         {!onLive && (
           <button
             onClick={() => navigate(null)}
@@ -63,7 +73,7 @@ export function RoundNav({ roundId, currentRound }: RoundNavProps) {
 
       <button
         onClick={() => navigate(roundId + 1n)}
-        disabled={currentRound === null || roundId >= currentRound}
+        disabled={currentRound === null}
         data-testid="round-next"
         className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
       >

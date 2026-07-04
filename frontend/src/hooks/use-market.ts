@@ -6,7 +6,8 @@ import { useConnection, useReadContract, useReadContracts } from "wagmi";
 import { cosmicGameAbi } from "@/lib/abi/cosmic-game";
 import { erc20Abi } from "@/lib/abi/erc20";
 import { gestureSeriesMarketAbi } from "@/lib/abi/gesture-series-market";
-import type { RoundSnapshot, UserSnapshot } from "@/lib/market";
+import type { PoolTuple, RoundSnapshot, RoundStateTuple, UserSnapshot } from "@/lib/market";
+import { toRoundSnapshot } from "@/lib/market";
 
 const REFRESH_MS = 8_000;
 
@@ -68,7 +69,8 @@ export function useRoundSnapshot(series: Address | null, statics: SeriesStatics 
             { ...contract, functionName: "roundState", args: [roundId] },
             { ...contract, functionName: "pool", args: [roundId] },
             { ...gameContract, functionName: "roundNum" },
-            // The would-be threshold, shown before anyone initializes the round.
+            // The previous round's live count: the FORMING threshold shown
+            // while this round is still in the future.
             { ...gameContract, functionName: "bidderAddresses", args: [roundId === 0n ? 0n : roundId - 1n] },
           ],
     query: {
@@ -79,33 +81,17 @@ export function useRoundSnapshot(series: Address | null, statics: SeriesStatics 
 
   const snapshot: RoundSnapshot | null = useMemo(() => {
     if (!series || !statics || roundId === null || !result.data) return null;
-    const [state, poolRow, gameRoundNum, prevRoundCount] = result.data as [
-      readonly [boolean, boolean, boolean, bigint, bigint, boolean, boolean],
-      readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint],
-      bigint,
-      bigint,
-    ];
-    const [initialized, resolved, yesWon, storedThreshold, currentCount] = state;
-    return {
+    const [state, poolRow, gameRoundNum, prevRoundCount] = result.data as [RoundStateTuple, PoolTuple, bigint, bigint];
+    return toRoundSnapshot({
       seriesAddress: series,
       roundId,
-      initialized,
-      resolved,
-      yesWon,
-      threshold: initialized ? storedThreshold : prevRoundCount,
-      currentCount,
+      state,
+      pool: poolRow,
       gameRoundNum,
-      pool: {
-        reserveYes: poolRow[0],
-        reserveNo: poolRow[1],
-        totalShares: poolRow[2],
-        accFeePerShare: poolRow[3],
-        feeReserve: poolRow[4],
-        feeWeight: poolRow[5],
-      },
+      prevRoundCount,
       cstAddress: statics.cstAddress,
       gameAddress: statics.gameAddress,
-    };
+    });
   }, [series, statics, roundId, result.data]);
 
   return { snapshot, isLoading: result.isLoading, error: result.error, refetch: result.refetch };

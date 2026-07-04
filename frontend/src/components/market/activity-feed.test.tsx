@@ -40,6 +40,8 @@ describe("ActivityFeed", () => {
       event({ kind: "redeem", amount: 5n * ONE }),
       event({ kind: "resolved", user: null, secondary: 950n, yesWon: true }),
       event({ kind: "claimed", amount: 75n * ONE }),
+      event({ kind: "roundInitialized", user: null }),
+      event({ kind: "thresholdLocked", user: null, secondary: 950n }),
     ];
     render(<ActivityFeed events={events} isLoading={false} />);
 
@@ -54,6 +56,8 @@ describe("ActivityFeed", () => {
     expect(feed).toHaveTextContent(/redeemed 5 sets for CST/);
     expect(feed).toHaveTextContent(/round resolved YES at 950 gestures/);
     expect(feed).toHaveTextContent(/claimed 75 CST/);
+    expect(feed).toHaveTextContent(/market opened for this round/);
+    expect(feed).toHaveTextContent(/threshold locked at 950 gestures/);
   });
 
   it("respects maxItems", () => {

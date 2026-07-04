@@ -8,6 +8,11 @@ export interface ThresholdRaceProps {
   currentCount: number;
   /** The previous round's final count — the number to beat (strictly). */
   threshold: number;
+  /** False while the round is still in the future: the previous round hasn't
+   * finished, so there is no finish line to race toward yet. */
+  thresholdKnown?: boolean;
+  /** The previous round's id, for the pending-threshold copy. */
+  prevRoundId?: bigint | null;
   resolved?: boolean;
   yesWon?: boolean;
 }
@@ -22,10 +27,42 @@ export function trackFraction(threshold: number, value: number): number {
 /**
  * The round as a race toward the previous round's count: a progress track
  * with the threshold as the finish line. Crossing it decides the market.
+ * While the threshold is still unknowable (future round), shows a pending
+ * strip instead of a race to a meaningless zero.
  */
-export function ThresholdRace({ currentCount, threshold, resolved = false, yesWon = false }: ThresholdRaceProps) {
+export function ThresholdRace({
+  currentCount,
+  threshold,
+  thresholdKnown = true,
+  prevRoundId = null,
+  resolved = false,
+  yesWon = false,
+}: ThresholdRaceProps) {
   const reduced = useReducedMotion();
   const crossed = currentCount > threshold;
+
+  if (!thresholdKnown) {
+    return (
+      <div data-testid="threshold-race" className="w-full select-none">
+        <div
+          data-testid="race-pending"
+          className="flex h-10 items-center justify-center rounded-full border border-dashed border-line bg-surface-2/40 px-4 text-xs text-ink-faint"
+        >
+          The finish line isn&apos;t set yet — the threshold locks
+          {prevRoundId !== null ? ` when round ${prevRoundId.toString()} ends` : " when the previous round ends"}
+        </div>
+        <div className="mt-1 flex items-baseline justify-between font-mono text-xs text-ink-faint">
+          <span data-testid="race-current">
+            {formatCount(currentCount)} <span className="text-[10px] uppercase">so far</span>
+          </span>
+          <span className="text-[10px] uppercase tracking-widest text-ink-faint/80">threshold pending</span>
+          <span data-testid="race-target" className="text-ended">
+            beat ?
+          </span>
+        </div>
+      </div>
+    );
+  }
   const progressPct = trackFraction(threshold, currentCount) * 100;
   const thresholdPct = trackFraction(threshold, threshold) * 100;
   const fillColor = crossed ? "bg-higher/80" : "bg-nova/70";

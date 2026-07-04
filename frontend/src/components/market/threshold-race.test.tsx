@@ -45,4 +45,18 @@ describe("ThresholdRace", () => {
     render(<ThresholdRace currentCount={800} threshold={800} />);
     expect(screen.getByTestId("threshold-race")).not.toHaveTextContent(/crossed/i);
   });
+
+  it("shows the pending strip instead of a race while the threshold is unknown", () => {
+    render(<ThresholdRace currentCount={0} threshold={0} thresholdKnown={false} prevRoundId={6n} />);
+    expect(screen.getByTestId("race-pending")).toHaveTextContent(/locks when round 6 ends/i);
+    expect(screen.getByTestId("race-target")).toHaveTextContent(/beat \?/i);
+    expect(screen.queryByTestId("race-marker")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("race-threshold")).not.toBeInTheDocument();
+  });
+
+  it("never treats an unknown threshold of 0 as a crossing", () => {
+    render(<ThresholdRace currentCount={5} threshold={0} thresholdKnown={false} prevRoundId={null} />);
+    expect(screen.getByTestId("threshold-race")).not.toHaveTextContent(/crossed/i);
+    expect(screen.getByTestId("threshold-race")).toHaveTextContent(/threshold pending/i);
+  });
 });

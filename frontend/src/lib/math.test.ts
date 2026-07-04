@@ -142,6 +142,21 @@ describe("buyAmount / quoteBet / applyBet", () => {
     );
   });
 
+  it("property: the net floor holds even against wei-dust pools — the guaranteed exit after a full LP rug", () => {
+    // A rugged pool is drained to dead-share dust; a one-sided holder can
+    // still pair up because a bet MINTS its net input in tokens regardless
+    // of reserves. This is the property the exit UX depends on.
+    const arbDust = fc.bigInt({ min: 1n, max: 10n ** 6n });
+    fc.assert(
+      fc.property(arbAmount, arbFee, arbDust, arbDust, (cstIn, feeBps, rY, rN) => {
+        const p = pool({ reserveYes: rY, reserveNo: rN, feeWeight: LIQ * feeBps });
+        const { net } = takeFee(cstIn, currentFeeBps(p));
+        expect(applyBet("yes", p, cstIn).tokensOut >= net).toBe(true);
+        expect(applyBet("no", p, cstIn).tokensOut >= net).toBe(true);
+      }),
+    );
+  });
+
   it("property: betting YES raises P(YES); betting NO lowers it", () => {
     fc.assert(
       fc.property(fc.bigInt({ min: ONE, max: 10n ** 23n }), (cstIn) => {

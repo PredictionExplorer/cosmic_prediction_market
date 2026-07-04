@@ -17,11 +17,42 @@ interface MarketHeroProps {
 
 const PHASE_BADGE = {
   uninitialized: { tone: "muted" as const, label: "Awaiting first liquidity", pulse: false },
+  future: { tone: "nova" as const, label: "Future round — open for early positions", pulse: false },
   live: { tone: "higher" as const, label: "Live", pulse: true },
   decided: { tone: "ended" as const, label: "Threshold crossed — YES won, awaiting resolution", pulse: true },
   ended: { tone: "ended" as const, label: "Round ended — awaiting resolution", pulse: true },
   resolved: { tone: "nova" as const, label: "Resolved", pulse: false },
 };
+
+/** The threshold line: locked value, forming value, or not-yet-knowable. */
+function ThresholdCopy({ snapshot }: { snapshot: RoundSnapshot }) {
+  if (snapshot.thresholdKnown) {
+    return (
+      <p className="text-xs text-ink-faint">
+        Beat last round&apos;s{" "}
+        <span className="font-mono font-semibold text-ended" data-testid="hero-threshold">
+          {formatCount(snapshot.threshold)}
+        </span>{" "}
+        gestures
+      </p>
+    );
+  }
+  const prevRound = snapshot.roundId - 1n;
+  if (snapshot.roundId === snapshot.gameRoundNum + 1n) {
+    return (
+      <p className="text-xs text-ink-faint" data-testid="hero-threshold-forming">
+        Threshold forming:{" "}
+        <span className="font-mono font-semibold text-ended">{formatCount(snapshot.prevRoundCount)}</span> gestures in
+        round {prevRound.toString()} so far, still climbing
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-ink-faint" data-testid="hero-threshold-unknown">
+      Threshold locks when round {prevRound.toString()} ends
+    </p>
+  );
+}
 
 /** The market's centerpiece: will this round out-gesture the last one? */
 export function MarketHero({ snapshot, history }: MarketHeroProps) {
@@ -38,13 +69,7 @@ export function MarketHero({ snapshot, history }: MarketHeroProps) {
           </Badge>
           <Badge tone="muted">Round {snapshot.roundId.toString()}</Badge>
         </div>
-        <p className="text-xs text-ink-faint">
-          Beat last round&apos;s{" "}
-          <span className="font-mono font-semibold text-ended" data-testid="hero-threshold">
-            {formatCount(snapshot.threshold)}
-          </span>{" "}
-          gestures
-        </p>
+        <ThresholdCopy snapshot={snapshot} />
       </div>
 
       <div className="mt-6 flex flex-col items-center text-center">
@@ -90,6 +115,8 @@ export function MarketHero({ snapshot, history }: MarketHeroProps) {
         <ThresholdRace
           currentCount={Number(snapshot.currentCount)}
           threshold={Number(snapshot.threshold)}
+          thresholdKnown={snapshot.thresholdKnown}
+          prevRoundId={snapshot.roundId === 0n ? null : snapshot.roundId - 1n}
           resolved={phase === "resolved"}
           yesWon={snapshot.yesWon}
         />

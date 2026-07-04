@@ -34,8 +34,10 @@ export function StatsGrid({ snapshot, volume }: StatsGridProps) {
     {
       icon: <Target className="size-4" aria-hidden />,
       label: "To beat",
-      value: formatCount(snapshot.threshold),
-      hint: "the previous round's final count — YES needs strictly more",
+      value: snapshot.thresholdKnown ? formatCount(snapshot.threshold) : "—",
+      hint: snapshot.thresholdKnown
+        ? "the previous round's final count — YES needs strictly more"
+        : "locks when the previous round ends — until then the bar is still forming",
     },
     {
       icon: <TrendingUp className="size-4" aria-hidden />,

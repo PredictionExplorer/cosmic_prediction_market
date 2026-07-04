@@ -79,7 +79,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
         </div>
 
         <div className="space-y-6">
-          {phase === "live" && (
+          {(phase === "live" || phase === "future") && (
             <BetPanel
               pool={snapshot.pool}
               balance={connected && user ? user.cstBalance : null}
