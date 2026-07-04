@@ -34,6 +34,12 @@ jobs:
       - name: Run Forge tests
         run: forge test -vvv
 
+      - name: Regenerate frontend differential vectors
+        run: forge script script/GenerateVectors.s.sol --tc GenerateVectors
+
+      - name: Ensure checked-in vectors match the contracts
+        run: git diff --exit-code frontend/src/test/fixtures/contract-vectors.json
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

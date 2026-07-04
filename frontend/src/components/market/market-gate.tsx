@@ -1,20 +1,22 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { appConfig, resolveMarketAddress } from "@/lib/config";
+import { appConfig, resolveMarketAddress, resolveRoundOverride } from "@/lib/config";
 import { Footer } from "@/components/layout/footer";
 import { NoMarketConfigured } from "./empty-states";
 import { MarketApp } from "./market-app";
 
 /**
- * Decides which market to show: `?market=0x…` overrides the configured
- * default, so one deployment can serve every round's market.
+ * Decides what to show: the series contract from config (`?market=0x…`
+ * overrides it) and the round (`?round=N` shows a past round; default follows
+ * the game's current round live).
  */
 export function MarketGate() {
   const searchParams = useSearchParams();
-  const marketAddress = resolveMarketAddress(appConfig.marketAddress, searchParams.get("market"));
+  const seriesAddress = resolveMarketAddress(appConfig.marketAddress, searchParams.get("market"));
+  const roundOverride = resolveRoundOverride(searchParams.get("round"));
 
-  if (marketAddress === null) {
+  if (seriesAddress === null) {
     return (
       <>
         <div className="py-16">
@@ -24,5 +26,5 @@ export function MarketGate() {
       </>
     );
   }
-  return <MarketApp marketAddress={marketAddress} />;
+  return <MarketApp seriesAddress={seriesAddress} roundOverride={roundOverride} />;
 }

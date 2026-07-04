@@ -18,7 +18,7 @@ export function NoMarketConfigured() {
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-nova-bright">
           NEXT_PUBLIC_MARKET_ADDRESS
         </code>{" "}
-        to a deployed GestureMarket, or open this page with{" "}
+        to the deployed GestureSeriesMarket, or open this page with{" "}
         <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-nova-bright">
           ?market=0x…
         </code>{" "}

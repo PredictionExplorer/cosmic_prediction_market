@@ -5,85 +5,173 @@ import { useMemo } from "react";
 import type { Address, Log, PublicClient } from "viem";
 import { parseEventLogs } from "viem";
 import { usePublicClient, useWatchContractEvent } from "wagmi";
-import { gestureMarketAbi } from "@/lib/abi/gesture-market";
+import { gestureSeriesMarketAbi } from "@/lib/abi/gesture-series-market";
 import { appConfig } from "@/lib/config";
-import type { BetEvent } from "@/lib/history";
+import type { PoolEvent } from "@/lib/history";
 import type { BetSide } from "@/lib/math";
 
-/** Any market event, normalized for the activity feed. */
+/** Any round event, normalized for the activity feed. */
 export interface ActivityEvent {
-  readonly kind: "bet" | "mint" | "redeem" | "resolved" | "claimed";
+  readonly kind: "bet" | "add" | "remove" | "feesClaimed" | "mint" | "redeem" | "resolved" | "claimed";
   readonly blockNumber: bigint;
   readonly logIndex: number;
   readonly transactionHash: `0x${string}`;
   readonly user: `0x${string}` | null;
   readonly side: BetSide | null;
-  /** Primary CST-denominated amount (bet in, set size, or claim out). */
+  readonly feeBps: number | null;
+  /** Primary CST-denominated amount (bet in, liquidity in/out, claim out…). */
   readonly amount: bigint;
-  /** For bets: outcome tokens received. For `resolved`: the final gesture count. */
+  /** For bets: tokens received. For `resolved`: the final gesture count. */
   readonly secondary: bigint;
+  /** For `resolved`: whether YES won. */
+  readonly yesWon: boolean | null;
   readonly timestamp: number | null;
 }
 
 interface EventScan {
   readonly activity: ActivityEvent[];
-  readonly bets: BetEvent[];
+  readonly poolEvents: PoolEvent[];
 }
 
 /** How many of the newest events get real block timestamps (1 RPC call per block). */
 const TIMESTAMPED_BLOCKS = 30;
 
-function decodeScan(logs: Log[]): Omit<EventScan, "timestamps"> {
-  const parsed = parseEventLogs({ abi: gestureMarketAbi, logs });
+function decodeScan(logs: Log[], roundId: bigint): EventScan {
+  const parsed = parseEventLogs({ abi: gestureSeriesMarketAbi, logs });
   const activity: ActivityEvent[] = [];
-  const bets: BetEvent[] = [];
+  const poolEvents: PoolEvent[] = [];
 
   for (const log of parsed) {
+    // Every series event carries the round as its first indexed arg.
+    if (!("roundId" in log.args) || log.args.roundId !== roundId) continue;
     const base = {
       blockNumber: log.blockNumber ?? 0n,
       logIndex: log.logIndex ?? 0,
       transactionHash: (log.transactionHash ?? "0x") as `0x${string}`,
       timestamp: null,
+      feeBps: null,
+      side: null,
+      yesWon: null,
     };
     switch (log.eventName) {
       case "Bet": {
-        const side: BetSide = log.args.higher ? "higher" : "lower";
-        activity.push({ ...base, kind: "bet", user: log.args.user, side, amount: log.args.cstIn, secondary: log.args.tokensOut });
-        bets.push({ ...base, user: log.args.user, side, cstIn: log.args.cstIn, tokensOut: log.args.tokensOut });
+        const side: BetSide = log.args.yes ? "yes" : "no";
+        activity.push({
+          ...base,
+          kind: "bet",
+          user: log.args.user,
+          side,
+          feeBps: log.args.feeBps,
+          amount: log.args.cstIn,
+          secondary: log.args.tokensOut,
+        });
+        poolEvents.push({
+          kind: "bet",
+          blockNumber: base.blockNumber,
+          logIndex: base.logIndex,
+          transactionHash: base.transactionHash,
+          user: log.args.user,
+          feeBps: log.args.feeBps,
+          side,
+          cstIn: log.args.cstIn,
+          netIn: log.args.netIn,
+          tokensOut: log.args.tokensOut,
+          timestamp: null,
+        });
         break;
       }
+      case "LiquidityAdded":
+        activity.push({
+          ...base,
+          kind: "add",
+          user: log.args.provider,
+          feeBps: log.args.feeBps,
+          amount: log.args.cstIn,
+          secondary: log.args.sharesOut,
+        });
+        poolEvents.push({
+          kind: "add",
+          blockNumber: base.blockNumber,
+          logIndex: base.logIndex,
+          transactionHash: base.transactionHash,
+          provider: log.args.provider,
+          feeBps: log.args.feeBps,
+          cstIn: log.args.cstIn,
+          sharesOut: log.args.sharesOut,
+          yesToPool: log.args.yesToPool,
+          noToPool: log.args.noToPool,
+          timestamp: null,
+        });
+        break;
+      case "LiquidityRemoved":
+        activity.push({
+          ...base,
+          kind: "remove",
+          user: log.args.provider,
+          feeBps: log.args.feeBps,
+          amount: log.args.yesOut > log.args.noOut ? log.args.yesOut : log.args.noOut,
+          secondary: log.args.sharesIn,
+        });
+        poolEvents.push({
+          kind: "remove",
+          blockNumber: base.blockNumber,
+          logIndex: base.logIndex,
+          transactionHash: base.transactionHash,
+          provider: log.args.provider,
+          feeBps: log.args.feeBps,
+          sharesIn: log.args.sharesIn,
+          yesOut: log.args.yesOut,
+          noOut: log.args.noOut,
+          feesOut: log.args.feesOut,
+          timestamp: null,
+        });
+        break;
+      case "FeesClaimed":
+        if (log.args.amount > 0n) {
+          activity.push({
+            ...base,
+            kind: "feesClaimed",
+            user: log.args.user,
+            feeBps: log.args.feeBps,
+            amount: log.args.amount,
+            secondary: 0n,
+          });
+        }
+        break;
       case "SetsMinted":
-        activity.push({ ...base, kind: "mint", user: log.args.user, side: null, amount: log.args.amount, secondary: 0n });
+        activity.push({ ...base, kind: "mint", user: log.args.user, amount: log.args.amount, secondary: 0n });
         break;
       case "SetsRedeemed":
-        activity.push({ ...base, kind: "redeem", user: log.args.user, side: null, amount: log.args.amount, secondary: 0n });
+        activity.push({ ...base, kind: "redeem", user: log.args.user, amount: log.args.amount, secondary: 0n });
         break;
       case "Resolved":
         activity.push({
           ...base,
           kind: "resolved",
           user: null,
-          side: null,
-          amount: log.args.payoutPerHigher,
-          secondary: log.args.finalGestureCount,
+          amount: 0n,
+          secondary: log.args.finalCount,
+          yesWon: log.args.yesWon,
         });
         break;
       case "Claimed":
-        activity.push({ ...base, kind: "claimed", user: log.args.user, side: null, amount: log.args.cstOut, secondary: 0n });
+        if (log.args.cstOut > 0n) {
+          activity.push({ ...base, kind: "claimed", user: log.args.user, amount: log.args.cstOut, secondary: 0n });
+        }
         break;
     }
   }
-  return { activity, bets };
+  return { activity, poolEvents };
 }
 
-async function scanEvents(client: PublicClient, market: Address): Promise<EventScan> {
+async function scanEvents(client: PublicClient, series: Address, roundId: bigint): Promise<EventScan> {
   const fromBlock = appConfig.deployBlock ?? "earliest";
   const logs = await client.getLogs({
-    address: market,
+    address: series,
     fromBlock,
     toBlock: "latest",
   });
-  const { activity, bets } = decodeScan(logs);
+  const { activity, poolEvents } = decodeScan(logs, roundId);
 
   // Timestamp only the newest blocks — enough for a human activity feed,
   // cheap enough for public RPCs.
@@ -107,38 +195,38 @@ async function scanEvents(client: PublicClient, market: Address): Promise<EventS
 
   return {
     activity: activity.map(withTs),
-    bets: bets.map(withTs),
+    poolEvents: poolEvents.map(withTs),
   };
 }
 
 /**
- * Full event history of the market plus live updates.
+ * Full event history of one round plus live updates.
  *
- * Strategy: one `eth_getLogs` scan (from the configured deploy block) cached in
- * react-query, then `watchContractEvent` invalidates the scan whenever any new
- * market event lands, so all consumers refresh together.
+ * Strategy: one `eth_getLogs` scan (from the configured deploy block) cached
+ * in react-query, then `watchContractEvent` invalidates the scan whenever any
+ * new series event lands, so all consumers refresh together.
  */
-export function useMarketEvents(market: Address | null) {
+export function useMarketEvents(series: Address | null, roundId: bigint | null) {
   const client = usePublicClient();
   const queryClient = useQueryClient();
-  const queryKey = useMemo(() => ["market-events", market] as const, [market]);
+  const queryKey = useMemo(() => ["series-events", series, roundId?.toString()] as const, [series, roundId]);
 
   const query = useQuery({
     queryKey,
-    enabled: market !== null && !!client,
+    enabled: series !== null && roundId !== null && !!client,
     staleTime: 30_000,
     refetchInterval: 60_000,
-    queryFn: () => scanEvents(client as PublicClient, market as Address),
+    queryFn: () => scanEvents(client as PublicClient, series as Address, roundId as bigint),
   });
 
   useWatchContractEvent({
-    address: market ?? undefined,
-    abi: gestureMarketAbi,
-    enabled: market !== null,
+    address: series ?? undefined,
+    abi: gestureSeriesMarketAbi,
+    enabled: series !== null,
     poll: true,
     pollingInterval: 8_000,
     onLogs: () => {
-      void queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey: ["series-events", series] });
     },
   });
 
@@ -151,12 +239,12 @@ export function useMarketEvents(market: Address | null) {
     });
   }, [query.data]);
 
-  const bets = query.data?.bets ?? [];
+  const poolEvents = query.data?.poolEvents ?? [];
 
-  return { activity, bets, isLoading: query.isLoading, error: query.error as Error | null };
+  return { activity, poolEvents, isLoading: query.isLoading, error: query.error as Error | null };
 }
 
-/** Sum of CST wagered through bets — the market's traded volume. */
-export function totalVolume(bets: readonly BetEvent[]): bigint {
-  return bets.reduce((acc, b) => acc + b.cstIn, 0n);
+/** Sum of CST wagered through bets — the round's traded volume. */
+export function totalVolume(events: readonly PoolEvent[]): bigint {
+  return events.reduce((acc, e) => (e.kind === "bet" ? acc + e.cstIn : acc), 0n);
 }

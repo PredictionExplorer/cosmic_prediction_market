@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAddress, parseAppConfig, resolveMarketAddress } from "./config";
+import { parseAddress, parseAppConfig, resolveMarketAddress, resolveRoundOverride } from "./config";
 
 const MARKET = "0x1111111111111111111111111111111111111111";
 
@@ -72,5 +72,22 @@ describe("resolveMarketAddress", () => {
 
   it("returns null when nothing is configured", () => {
     expect(resolveMarketAddress(null, "junk")).toBeNull();
+  });
+});
+
+describe("resolveRoundOverride", () => {
+  it("parses valid round numbers", () => {
+    expect(resolveRoundOverride("0")).toBe(0n);
+    expect(resolveRoundOverride("42")).toBe(42n);
+    expect(resolveRoundOverride(" 7 ")).toBe(7n);
+  });
+
+  it("ignores missing or malformed values (follow the live round instead)", () => {
+    expect(resolveRoundOverride(null)).toBeNull();
+    expect(resolveRoundOverride(undefined)).toBeNull();
+    expect(resolveRoundOverride("")).toBeNull();
+    expect(resolveRoundOverride("-1")).toBeNull();
+    expect(resolveRoundOverride("1.5")).toBeNull();
+    expect(resolveRoundOverride("banana")).toBeNull();
   });
 });

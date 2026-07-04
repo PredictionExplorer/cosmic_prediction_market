@@ -1,0 +1,75 @@
+"use client";
+
+import { ChevronLeft, ChevronRight, Radio } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback } from "react";
+
+interface RoundNavProps {
+  roundId: bigint;
+  /** The game's live round; null while loading. */
+  currentRound: bigint | null;
+}
+
+/**
+ * Navigate between rounds of the series via the `?round=` query param.
+ * Past rounds stay claimable forever; "Live" jumps back to following the
+ * game's current round.
+ */
+export function RoundNav({ roundId, currentRound }: RoundNavProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const navigate = useCallback(
+    (target: bigint | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (target === null) params.delete("round");
+      else params.set("round", target.toString());
+      const qs = params.toString();
+      router.push(qs ? `${pathname}?${qs}` : pathname);
+    },
+    [router, pathname, searchParams],
+  );
+
+  const onLive = currentRound !== null && roundId === currentRound;
+
+  return (
+    <nav className="flex items-center justify-between" aria-label="Round navigation" data-testid="round-nav">
+      <button
+        onClick={() => navigate(roundId - 1n)}
+        disabled={roundId <= 1n}
+        data-testid="round-prev"
+        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <ChevronLeft className="size-3.5" aria-hidden />
+        Round {(roundId - 1n).toString()}
+      </button>
+
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-display font-semibold text-ink" data-testid="round-current">
+          Round {roundId.toString()}
+        </span>
+        {!onLive && (
+          <button
+            onClick={() => navigate(null)}
+            data-testid="round-live"
+            className="flex items-center gap-1 rounded-full border border-higher/40 bg-higher/10 px-2.5 py-0.5 text-[11px] font-semibold text-higher transition-colors hover:bg-higher/20"
+          >
+            <Radio className="size-3" aria-hidden />
+            Jump to live
+          </button>
+        )}
+      </div>
+
+      <button
+        onClick={() => navigate(roundId + 1n)}
+        disabled={currentRound === null || roundId >= currentRound}
+        data-testid="round-next"
+        className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-ink-faint transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Round {(roundId + 1n).toString()}
+        <ChevronRight className="size-3.5" aria-hidden />
+      </button>
+    </nav>
+  );
+}

@@ -1,102 +1,97 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Settings2 } from "lucide-react";
+import { Check, Settings2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatUnits } from "viem";
 import { appConfig } from "@/lib/config";
-import { formatCount, formatCst, parseCstInput } from "@/lib/format";
-import type { MarketRange, PoolState } from "@/lib/math";
-import {
-  entryCount,
-  minTokensOutForSlippage,
-  predictedCountFloat,
-  quoteBet,
-  takeFee,
-  type BetSide,
-} from "@/lib/math";
+import { formatBps, formatCst, parseCstInput } from "@/lib/format";
+import type { BetSide, TierPool } from "@/lib/math";
+import { bestTier, entryProbability, minTokensOutForSlippage, quoteBet, takeFee } from "@/lib/math";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
 export interface BetPanelProps {
-  range: MarketRange;
-  pool: PoolState;
-  feeBps: bigint;
+  pools: readonly TierPool[];
   /** Null when no wallet is connected. */
   balance: bigint | null;
   allowance: bigint | null;
   pendingAction: "approve" | "bet" | null;
   onConnect: () => void;
   onApprove: (amount: bigint) => Promise<boolean>;
-  onBet: (side: BetSide, cstIn: bigint, minTokensOut: bigint) => Promise<boolean>;
+  /** Bet through one specific tier. */
+  onBet: (side: BetSide, feeBps: number, cstIn: bigint, minTokensOut: bigint) => Promise<boolean>;
 }
 
 const SLIPPAGE_PRESETS_BPS = [10, 50, 100] as const;
 
 /**
- * Place a bet: pick a side, type CST, see the exact quote (client-side pure
- * math, mirrors the contract), approve if needed, bet with slippage guard.
+ * Place a bet: pick YES/NO, type CST, and the panel routes to the fee tier
+ * with the best all-in execution (override available). Quotes are exact
+ * client-side math mirroring the contract; the slippage floor from the same
+ * quote is what protects the bet from liquidity pulls and sandwiches.
  */
-export function BetPanel({
-  range,
-  pool,
-  feeBps,
-  balance,
-  allowance,
-  pendingAction,
-  onConnect,
-  onApprove,
-  onBet,
-}: BetPanelProps) {
-  const [side, setSide] = useState<BetSide>("higher");
+export function BetPanel({ pools, balance, allowance, pendingAction, onConnect, onApprove, onBet }: BetPanelProps) {
+  const [side, setSide] = useState<BetSide>("yes");
   const [input, setInput] = useState("");
   const [slippageBps, setSlippageBps] = useState<number>(50);
   const [showSettings, setShowSettings] = useState(false);
+  const [tierOverride, setTierOverride] = useState<number | null>(null);
 
   const parsed = parseCstInput(input);
   const amount = parsed.value;
 
-  const quote = useMemo(() => {
+  const routed = useMemo(() => {
     if (amount === null) return null;
-    const tokensOut = quoteBet(side, pool, amount, feeBps);
-    const entry = entryCount(range, side, amount, tokensOut);
-    const minOut = minTokensOutForSlippage(tokensOut, slippageBps);
-    const { fee } = takeFee(amount, feeBps);
-    // Max multiple if the count lands fully on your side of the range.
-    const multiple = Number(tokensOut) / Number(amount);
-    return { tokensOut, entry, minOut, fee, multiple };
-  }, [amount, side, pool, feeBps, range, slippageBps]);
+    return bestTier(side, pools, amount);
+  }, [amount, side, pools]);
 
-  const prediction = predictedCountFloat(range, pool);
+  const chosenTier = tierOverride ?? routed?.feeBps ?? null;
+
+  const quote = useMemo(() => {
+    if (amount === null || chosenTier === null) return null;
+    const pool = pools.find((p) => p.feeBps === chosenTier)?.pool;
+    if (!pool) return null;
+    const tokensOut = quoteBet(side, pool, amount, BigInt(chosenTier));
+    if (tokensOut === 0n) return null;
+    const minOut = minTokensOutForSlippage(tokensOut, slippageBps);
+    const { fee } = takeFee(amount, BigInt(chosenTier));
+    const entry = entryProbability(amount, tokensOut);
+    return { tokensOut, minOut, fee, entry };
+  }, [amount, chosenTier, side, pools, slippageBps]);
+
+  const fundedTiers = pools.filter((p) => p.pool.totalShares > 0n);
   const connected = balance !== null;
   const insufficient = connected && amount !== null && amount > (balance ?? 0n);
   const needsApproval = connected && amount !== null && (allowance ?? 0n) < amount;
   const busy = pendingAction !== null;
+  const noLiquidity = fundedTiers.length === 0;
 
   const submit = async () => {
     if (!connected) {
       onConnect();
       return;
     }
-    if (amount === null || quote === null || insufficient) return;
+    if (amount === null || quote === null || chosenTier === null || insufficient) return;
     if (needsApproval) {
       await onApprove(amount);
       return;
     }
-    const ok = await onBet(side, amount, quote.minOut);
+    const ok = await onBet(side, chosenTier, amount, quote.minOut);
     if (ok) setInput("");
   };
 
-  const sideColor = side === "higher" ? "text-higher" : "text-lower";
+  const sideColor = side === "yes" ? "text-higher" : "text-lower";
 
   let buttonLabel: string;
   if (!connected) buttonLabel = "Connect wallet to bet";
+  else if (noLiquidity) buttonLabel = "No liquidity yet";
   else if (amount === null) buttonLabel = "Enter an amount";
   else if (insufficient) buttonLabel = "Insufficient CST balance";
   else if (needsApproval) buttonLabel = "Approve CST";
-  else buttonLabel = side === "higher" ? "Bet HIGHER" : "Bet LOWER";
+  else buttonLabel = side === "yes" ? "Bet YES" : "Bet NO";
 
   return (
-    <Card accent={side} className="p-5" data-testid="bet-panel">
+    <Card accent={side === "yes" ? "higher" : "lower"} className="p-5" data-testid="bet-panel">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-lg font-semibold">Place your bet</h2>
         <button
@@ -109,7 +104,10 @@ export function BetPanel({
       </div>
 
       {showSettings && (
-        <div className="mt-3 flex items-center justify-between rounded-xl border border-line bg-surface-2/50 px-3 py-2" data-testid="slippage-settings">
+        <div
+          className="mt-3 flex items-center justify-between rounded-xl border border-line bg-surface-2/50 px-3 py-2"
+          data-testid="slippage-settings"
+        >
           <span className="text-xs text-ink-dim">Max slippage</span>
           <div className="flex gap-1">
             {SLIPPAGE_PRESETS_BPS.map((bps) => (
@@ -132,40 +130,38 @@ export function BetPanel({
       <div className="mt-4 grid grid-cols-2 gap-2" role="tablist" aria-label="Bet direction">
         <button
           role="tab"
-          aria-selected={side === "higher"}
-          data-testid="tab-higher"
-          onClick={() => setSide("higher")}
+          aria-selected={side === "yes"}
+          data-testid="tab-yes"
+          onClick={() => setSide("yes")}
           className={[
             "flex items-center justify-center gap-2 rounded-xl border py-3 font-display text-sm font-bold uppercase tracking-wide transition-all",
-            side === "higher"
+            side === "yes"
               ? "border-higher/60 bg-higher/12 text-higher shadow-glow-higher"
               : "border-line text-ink-faint hover:border-line-strong hover:text-ink-dim",
           ].join(" ")}
         >
-          <ArrowUp className="size-4" aria-hidden /> Higher
+          <Check className="size-4" aria-hidden /> Yes
         </button>
         <button
           role="tab"
-          aria-selected={side === "lower"}
-          data-testid="tab-lower"
-          onClick={() => setSide("lower")}
+          aria-selected={side === "no"}
+          data-testid="tab-no"
+          onClick={() => setSide("no")}
           className={[
             "flex items-center justify-center gap-2 rounded-xl border py-3 font-display text-sm font-bold uppercase tracking-wide transition-all",
-            side === "lower"
+            side === "no"
               ? "border-lower/60 bg-lower/12 text-lower shadow-glow-lower"
               : "border-line text-ink-faint hover:border-line-strong hover:text-ink-dim",
           ].join(" ")}
         >
-          <ArrowDown className="size-4" aria-hidden /> Lower
+          <X className="size-4" aria-hidden /> No
         </button>
       </div>
 
       <p className="mt-2 text-center text-xs text-ink-faint">
-        You win if the final count is{" "}
-        <span className={`font-semibold ${sideColor}`}>
-          {side === "higher" ? "above" : "below"}
-        </span>{" "}
-        your entry of ~{formatCount(quote?.entry ?? prediction)} gestures
+        You win if this round{" "}
+        <span className={`font-semibold ${sideColor}`}>{side === "yes" ? "beats" : "doesn't beat"}</span> last round&apos;s
+        gesture count
       </p>
 
       {/* Amount */}
@@ -193,9 +189,7 @@ export function BetPanel({
             onChange={(e) => setInput(e.target.value)}
             className="w-full bg-transparent font-display text-2xl font-semibold text-ink outline-none placeholder:text-ink-faint/50"
           />
-          <span className="rounded-lg bg-surface-2 px-2.5 py-1 font-mono text-xs font-semibold text-ink-dim">
-            CST
-          </span>
+          <span className="rounded-lg bg-surface-2 px-2.5 py-1 font-mono text-xs font-semibold text-ink-dim">CST</span>
         </div>
         {parsed.error && (
           <p className="mt-1 text-xs text-lower" role="alert" data-testid="input-error">
@@ -203,6 +197,48 @@ export function BetPanel({
           </p>
         )}
       </div>
+
+      {/* Fee tier routing */}
+      {fundedTiers.length > 0 && (
+        <div className="mt-3" data-testid="tier-selector">
+          <p className="text-[11px] text-ink-faint">
+            Fee tier{" "}
+            {tierOverride === null && routed !== null && (
+              <span className="text-nova-bright" data-testid="tier-auto-label">
+                — auto-routed to best price
+              </span>
+            )}
+          </p>
+          <div className="mt-1.5 flex gap-1.5">
+            {pools.map(({ feeBps, pool }) => {
+              const funded = pool.totalShares > 0n;
+              const active = chosenTier === feeBps;
+              const isRouted = routed?.feeBps === feeBps && tierOverride === null;
+              return (
+                <button
+                  key={feeBps}
+                  data-testid={`tier-${feeBps}`}
+                  disabled={!funded}
+                  aria-pressed={active}
+                  onClick={() => setTierOverride(tierOverride === feeBps ? null : feeBps)}
+                  title={funded ? undefined : "No liquidity in this tier yet"}
+                  className={[
+                    "flex-1 rounded-lg border px-2 py-1.5 font-mono text-xs transition-colors",
+                    !funded
+                      ? "cursor-not-allowed border-line/50 text-ink-faint/40"
+                      : active
+                        ? "border-nova/60 bg-nova/15 text-nova-bright"
+                        : "border-line text-ink-faint hover:border-line-strong hover:text-ink-dim",
+                  ].join(" ")}
+                >
+                  {formatBps(BigInt(feeBps))}
+                  {isRouted && <span className="ml-1 text-[9px] uppercase text-higher">best</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Quote */}
       {quote !== null && !parsed.error && (
@@ -214,24 +250,26 @@ export function BetPanel({
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-ink-faint">Your entry (break-even)</dt>
-            <dd className="font-mono text-ink" data-testid="quote-entry">
-              {quote.entry === null ? "—" : `${formatCount(quote.entry)} gestures`}
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-ink-faint">Max payout (up to {quote.multiple.toLocaleString("en-US", { maximumFractionDigits: 2 })}×)</dt>
-            <dd className="font-mono text-ink" data-testid="quote-max-payout">
+            <dt className="text-ink-faint">Payout if {side.toUpperCase()} wins</dt>
+            <dd className="font-mono text-ink" data-testid="quote-payout">
               {formatCst(quote.tokensOut)} CST
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-ink-faint">Fee</dt>
+            <dt className="text-ink-faint">Your entry (implied chance)</dt>
+            <dd className="font-mono text-ink" data-testid="quote-entry">
+              {quote.entry === null ? "—" : `${(quote.entry * 100).toLocaleString("en-US", { maximumFractionDigits: 1 })}%`}
+            </dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-ink-faint">Fee (to liquidity providers)</dt>
             <dd className="font-mono text-ink-dim">{formatCst(quote.fee)} CST</dd>
           </div>
           <div className="flex justify-between">
             <dt className="text-ink-faint">Min received (slippage {(slippageBps / 100).toLocaleString("en-US")}%)</dt>
-            <dd className="font-mono text-ink-dim">{formatCst(quote.minOut)}</dd>
+            <dd className="font-mono text-ink-dim" data-testid="quote-min-out">
+              {formatCst(quote.minOut)}
+            </dd>
           </div>
         </dl>
       )}
@@ -239,8 +277,8 @@ export function BetPanel({
       <Button
         className="mt-4 w-full"
         size="lg"
-        variant={!connected ? "nova" : needsApproval ? "nova" : side}
-        disabled={connected && (amount === null || insufficient || !!parsed.error)}
+        variant={!connected || needsApproval ? "nova" : side === "yes" ? "higher" : "lower"}
+        disabled={connected && (noLiquidity || amount === null || insufficient || !!parsed.error)}
         loading={busy}
         onClick={() => void submit()}
         data-testid="bet-submit"
@@ -249,8 +287,8 @@ export function BetPanel({
       </Button>
 
       <p className="mt-3 text-center text-[11px] leading-relaxed text-ink-faint">
-        Bets are placed in CST on {appConfig.chain.name}. 1 winning-side token pays up to 1 CST at
-        resolution. Exit early any time by betting the other side and redeeming pairs.
+        Bets are placed in CST on {appConfig.chain.name}. A winning token pays exactly 1 CST at resolution; a losing
+        token pays 0. Exit early any time by betting the other side and redeeming pairs.
       </p>
     </Card>
   );

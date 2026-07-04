@@ -15,7 +15,7 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 export interface AppConfig {
   /** The single chain this deployment targets. */
   readonly chain: Chain;
-  /** Default market shown when no `?market=` override is present. `null` = not configured. */
+  /** The GestureSeriesMarket singleton (`?market=` overrides). `null` = not configured. */
   readonly marketAddress: Address | null;
   /** Optional RPC override; falls back to the chain's public RPC. */
   readonly rpcUrl: string | null;
@@ -82,8 +82,8 @@ export function parseAppConfig(raw: RawEnv): AppConfig {
 }
 
 /**
- * Picks the market to display: a valid `?market=0x…` query param wins over the
- * configured default, letting one deployment serve any number of per-round markets.
+ * Picks the series contract to display: a valid `?market=0x…` query param
+ * wins over the configured default (useful for testing new deployments).
  * Invalid overrides are ignored rather than breaking the page.
  */
 export function resolveMarketAddress(
@@ -94,6 +94,17 @@ export function resolveMarketAddress(
     return getAddress(queryParam.trim().toLowerCase());
   }
   return configured;
+}
+
+/**
+ * Picks the round to display: a valid `?round=N` query param shows a past (or
+ * specific) round; otherwise the app follows the game's current round live.
+ * Invalid overrides are ignored rather than breaking the page.
+ */
+export function resolveRoundOverride(queryParam: string | null | undefined): bigint | null {
+  const raw = queryParam?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  return BigInt(raw);
 }
 
 /**

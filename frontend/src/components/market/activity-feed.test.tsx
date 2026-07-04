@@ -4,55 +4,61 @@ import type { ActivityEvent } from "@/hooks/use-market-events";
 import { ONE } from "@/lib/math";
 import { ActivityFeed } from "./activity-feed";
 
-function event(partial: Partial<ActivityEvent>): ActivityEvent {
+let logIndex = 0;
+function event(overrides: Partial<ActivityEvent>): ActivityEvent {
   return {
     kind: "bet",
-    blockNumber: 1n,
-    logIndex: 0,
-    transactionHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    user: "0x5555555555555555555555555555555555555555",
-    side: "higher",
-    amount: 100n * ONE,
-    secondary: 105n * ONE,
+    blockNumber: 100n,
+    logIndex: logIndex++,
+    transactionHash: "0xabc",
+    user: "0x1234567890123456789012345678901234567890",
+    side: null,
+    feeBps: null,
+    amount: 0n,
+    secondary: 0n,
+    yesWon: null,
     timestamp: null,
-    ...partial,
+    ...overrides,
   };
 }
 
 describe("ActivityFeed", () => {
-  it("shows skeletons while loading", () => {
-    render(<ActivityFeed events={[]} isLoading />);
-    expect(screen.getAllByTestId("skeleton").length).toBeGreaterThan(0);
-  });
-
   it("shows an empty state without events", () => {
     render(<ActivityFeed events={[]} isLoading={false} />);
-    expect(screen.getByTestId("activity-empty")).toHaveTextContent(/no activity yet/i);
+    expect(screen.getByTestId("activity-empty")).toBeInTheDocument();
   });
 
-  it("describes each event kind in plain language", () => {
+  it("describes every event kind in plain language", () => {
     const events: ActivityEvent[] = [
-      event({ kind: "bet", side: "higher", logIndex: 0 }),
-      event({ kind: "bet", side: "lower", logIndex: 1, amount: 25n * ONE }),
-      event({ kind: "mint", side: null, logIndex: 2, amount: 10n * ONE }),
-      event({ kind: "redeem", side: null, logIndex: 3, amount: 4n * ONE }),
-      event({ kind: "resolved", side: null, user: null, logIndex: 4, secondary: 987n }),
-      event({ kind: "claimed", side: null, logIndex: 5, amount: 55n * ONE }),
+      event({ kind: "bet", side: "yes", feeBps: 100, amount: 50n * ONE, secondary: 98n * ONE }),
+      event({ kind: "bet", side: "no", feeBps: 500, amount: 10n * ONE }),
+      event({ kind: "add", feeBps: 200, amount: 1_000n * ONE }),
+      event({ kind: "remove", feeBps: 200, amount: 400n * ONE }),
+      event({ kind: "feesClaimed", feeBps: 100, amount: 3n * ONE }),
+      event({ kind: "mint", amount: 25n * ONE }),
+      event({ kind: "redeem", amount: 5n * ONE }),
+      event({ kind: "resolved", user: null, secondary: 950n, yesWon: true }),
+      event({ kind: "claimed", amount: 75n * ONE }),
     ];
     render(<ActivityFeed events={events} isLoading={false} />);
 
-    expect(screen.getByText("HIGHER")).toBeInTheDocument();
-    expect(screen.getByText("LOWER")).toBeInTheDocument();
-    expect(screen.getByText(/minted/)).toBeInTheDocument();
-    expect(screen.getByText(/redeemed/)).toBeInTheDocument();
-    expect(screen.getByText(/market resolved at/)).toBeInTheDocument();
-    expect(screen.getByText("987 gestures")).toBeInTheDocument();
-    expect(screen.getByText(/claimed/)).toBeInTheDocument();
+    const feed = screen.getByTestId("activity-feed");
+    expect(feed).toHaveTextContent(/bet 50 CST on YES · 1% pool/);
+    expect(feed).toHaveTextContent(/bet 10 CST on NO · 5% pool/);
+    expect(feed).toHaveTextContent(/added 1,000 CST of liquidity · 2% pool/);
+    expect(feed).toHaveTextContent(/removed liquidity from the 2% pool/);
+    expect(feed).toHaveTextContent(/claimed 3 CST in LP fees/);
+    expect(feed).toHaveTextContent(/minted 25 sets/);
+    expect(feed).toHaveTextContent(/redeemed 5 sets for CST/);
+    expect(feed).toHaveTextContent(/round resolved YES at 950 gestures/);
+    expect(feed).toHaveTextContent(/claimed 75 CST/);
   });
 
-  it("caps the list at maxItems", () => {
-    const events = Array.from({ length: 10 }, (_, i) => event({ logIndex: i }));
+  it("respects maxItems", () => {
+    const events = Array.from({ length: 10 }, (_, i) =>
+      event({ kind: "mint", amount: BigInt(i + 1) * ONE, logIndex: i }),
+    );
     render(<ActivityFeed events={events} isLoading={false} maxItems={3} />);
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.getByTestId("activity-feed").querySelectorAll("li")).toHaveLength(3);
   });
 });

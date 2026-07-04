@@ -1,42 +1,57 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import vectors from "@/test/fixtures/contract-vectors.json";
 import {
+  aggregateProbabilityFloat,
   applyBet,
+  bestTier,
   BPS,
-  breakEvenCount,
+  buyAmount,
   ceilDiv,
   claimValue,
-  entryCount,
-  invertBet,
+  DEAD_SHARES,
+  EMPTY_POOL,
+  entryProbability,
+  joinPool,
   minTokensOutForSlippage,
   ONE,
-  payoutPerHigherFor,
-  positionValueAt,
-  predictedCount,
-  predictedCountFloat,
+  openPool,
+  pendingFees,
+  poolIsTradable,
+  positionValueAtProbability,
+  probabilityFloat,
   quoteBet,
-  rangeFraction,
+  removeLiquidity,
   takeFee,
   type PoolState,
+  type TierPool,
 } from "./math";
 
-// Mirrors the deploy script defaults: range 200–1200 in several tests below,
-// and the reference values are cross-checked against the Foundry unit tests.
-const RANGE = { minCount: 200n, maxCount: 1_200n };
 const LIQ = 10_000n * ONE;
-const POOL: PoolState = { reserveHigher: LIQ, reserveLower: LIQ };
-const FEE = 100n; // 1%, like the deploy default
+
+/** A funded 50/50 pool like the local sandbox seeds. */
+function pool(overrides: Partial<PoolState> = {}): PoolState {
+  return {
+    reserveYes: LIQ,
+    reserveNo: LIQ,
+    totalShares: LIQ,
+    accFeePerShare: 0n,
+    feeReserve: 0n,
+    ...overrides,
+  };
+}
 
 const arbAmount = fc.bigInt({ min: 1n, max: 10n ** 24n }); // up to 1M CST
-const arbFee = fc.bigInt({ min: 0n, max: 1_000n });
+const arbFee = fc.bigInt({ min: 1n, max: 1_000n });
 const arbReserve = fc.bigInt({ min: ONE / 1000n, max: 10n ** 27n });
+const arbProb = fc.bigInt({ min: 100n, max: 9_900n });
+const arbLiquidity = fc.bigInt({ min: 10n ** 15n, max: 10n ** 24n });
 
 describe("ceilDiv", () => {
   it("matches Solidity's _ceilDiv on exact and inexact divisions", () => {
     expect(ceilDiv(10n, 5n)).toBe(2n);
     expect(ceilDiv(11n, 5n)).toBe(3n);
     expect(ceilDiv(0n, 5n)).toBe(0n);
-    expect(ceilDiv(1n, 1n)).toBe(1n);
   });
 
   it("rejects non-positive divisors and negative dividends", () => {
@@ -46,26 +61,16 @@ describe("ceilDiv", () => {
 
   it("property: result is the smallest q with q*b >= a", () => {
     fc.assert(
-      fc.property(
-        fc.bigInt({ min: 0n, max: 10n ** 30n }),
-        fc.bigInt({ min: 1n, max: 10n ** 20n }),
-        (a, b) => {
-          const q = ceilDiv(a, b);
-          expect(q * b >= a).toBe(true);
-          expect((q - 1n) * b < a || q === 0n).toBe(true);
-        },
-      ),
+      fc.property(fc.bigInt({ min: 0n, max: 10n ** 30n }), fc.bigInt({ min: 1n, max: 10n ** 20n }), (a, b) => {
+        const q = ceilDiv(a, b);
+        expect(q * b >= a).toBe(true);
+        expect((q - 1n) * b < a || q === 0n).toBe(true);
+      }),
     );
   });
 });
 
 describe("takeFee", () => {
-  it("splits amount into fee and net exactly", () => {
-    const { fee, net } = takeFee(1_000n * ONE, 100n);
-    expect(fee).toBe(10n * ONE);
-    expect(net).toBe(990n * ONE);
-  });
-
   it("property: fee + net === amount, fee rounds down", () => {
     fc.assert(
       fc.property(arbAmount, arbFee, (amount, feeBps) => {
@@ -78,285 +83,322 @@ describe("takeFee", () => {
 });
 
 describe("buyAmount / quoteBet / applyBet", () => {
-  it("reproduces the contract's reference bet from the Foundry tests", () => {
-    // test_betHigherMovesPredictionUp: 5000 CST at 1% fee into 10k/10k pool.
-    const result = applyBet("higher", POOL, 5_000n * ONE, FEE);
-    // Buying below max price always yields more tokens than the net CST spent.
-    expect(result.tokensOut > 4_950n * ONE).toBe(true);
-    expect(result.fee).toBe(50n * ONE);
-    // The prediction must rise above the midpoint (700).
-    const predicted = predictedCount(RANGE, result.pool);
-    expect(predicted > 700n).toBe(true);
-  });
-
-  it("quoteBet matches applyBet's tokensOut for both sides", () => {
+  it("property: the pool never loses — k never decreases, reserves never empty", () => {
     fc.assert(
-      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rh, rl) => {
-        const pool = { reserveHigher: rh, reserveLower: rl };
-        expect(quoteBet("higher", pool, cstIn, feeBps)).toBe(applyBet("higher", pool, cstIn, feeBps).tokensOut);
-        expect(quoteBet("lower", pool, cstIn, feeBps)).toBe(applyBet("lower", pool, cstIn, feeBps).tokensOut);
+      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rY, rN) => {
+        const p = pool({ reserveYes: rY, reserveNo: rN });
+        const after = applyBet("yes", p, cstIn, feeBps).pool;
+        expect(after.reserveYes * after.reserveNo >= rY * rN).toBe(true);
+        expect(after.reserveYes >= 1n).toBe(true);
+        expect(after.reserveNo >= 1n).toBe(true);
       }),
     );
   });
 
-  it("property: pool constant product k never decreases (pool never loses)", () => {
+  it("property: quote equals execution for both sides", () => {
     fc.assert(
-      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rh, rl) => {
-        const pool = { reserveHigher: rh, reserveLower: rl };
-        const after = applyBet("higher", pool, cstIn, feeBps).pool;
-        expect(after.reserveHigher * after.reserveLower >= rh * rl).toBe(true);
+      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rY, rN) => {
+        const p = pool({ reserveYes: rY, reserveNo: rN });
+        expect(quoteBet("yes", p, cstIn, feeBps)).toBe(applyBet("yes", p, cstIn, feeBps).tokensOut);
+        expect(quoteBet("no", p, cstIn, feeBps)).toBe(applyBet("no", p, cstIn, feeBps).tokensOut);
       }),
     );
   });
 
-  it("property: tokensOut is between net (min) and net + reserveOut (max)", () => {
+  it("property: tokensOut is at least net and below net + reserveOut", () => {
     fc.assert(
-      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rh, rl) => {
-        const pool = { reserveHigher: rh, reserveLower: rl };
+      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rY, rN) => {
+        const p = pool({ reserveYes: rY, reserveNo: rN });
         const { net } = takeFee(cstIn, feeBps);
-        const out = applyBet("higher", pool, cstIn, feeBps).tokensOut;
+        const out = applyBet("yes", p, cstIn, feeBps).tokensOut;
         expect(out >= net).toBe(true);
-        expect(out < net + rh).toBe(true);
+        expect(out < net + rY).toBe(true);
       }),
     );
   });
 
-  it("property: higher/lower are exact mirrors of each other", () => {
+  it("property: betting YES raises P(YES); betting NO lowers it", () => {
     fc.assert(
-      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rh, rl) => {
-        const pool = { reserveHigher: rh, reserveLower: rl };
-        const mirror = { reserveHigher: rl, reserveLower: rh };
-        const a = applyBet("higher", pool, cstIn, feeBps);
-        const b = applyBet("lower", mirror, cstIn, feeBps);
-        expect(a.tokensOut).toBe(b.tokensOut);
-        expect(a.pool.reserveHigher).toBe(b.pool.reserveLower);
-        expect(a.pool.reserveLower).toBe(b.pool.reserveHigher);
+      fc.property(fc.bigInt({ min: ONE, max: 10n ** 23n }), arbFee, (cstIn, feeBps) => {
+        const p = pool();
+        const pBefore = probabilityFloat(p) as number;
+        const afterYes = applyBet("yes", p, cstIn, feeBps).pool;
+        const afterNo = applyBet("no", p, cstIn, feeBps).pool;
+        expect(probabilityFloat(afterYes) as number).toBeGreaterThan(pBefore);
+        expect(probabilityFloat(afterNo) as number).toBeLessThan(pBefore);
       }),
     );
   });
 
-  it("mirrors the Foundry split-bet fuzz test exactly (balanced pool, 1% fee, ±4 wei)", () => {
-    // Same domain and tolerance as testFuzz_splitBetEquivalentToSingleBet.
+  it("property: fee escrow and accumulator advance exactly", () => {
     fc.assert(
-      fc.property(
-        fc.bigInt({ min: ONE, max: 100_000n * ONE }),
-        fc.bigInt({ min: ONE, max: 100_000n * ONE }),
-        (a, b) => {
-          const first = applyBet("higher", POOL, a, FEE);
-          const second = applyBet("higher", first.pool, b, FEE);
-          const split = first.tokensOut + second.tokensOut;
-          const whole = applyBet("higher", POOL, a + b, FEE).tokensOut;
-          const diff = split > whole ? split - whole : whole - split;
-          expect(diff <= 4n).toBe(true);
-        },
-      ),
+      fc.property(arbAmount, arbFee, (cstIn, feeBps) => {
+        const p = pool();
+        const { fee } = takeFee(cstIn, feeBps);
+        const after = applyBet("yes", p, cstIn, feeBps).pool;
+        expect(after.feeReserve).toBe(fee);
+        expect(after.accFeePerShare).toBe((fee * ONE) / p.totalShares);
+      }),
     );
   });
 
-  it("property: splitting a bet is path-independent within amplified rounding", () => {
-    // The ±1 wei fee-flooring wobble is amplified by the marginal token price,
-    // which is bounded by reserveOut/reserveIn; plus a couple of ceilDiv weis.
+  it("quotes 0 for unfunded or drained pools", () => {
+    expect(quoteBet("yes", EMPTY_POOL, ONE, 100n)).toBe(0n);
+    expect(quoteBet("no", pool({ reserveYes: 0n }), ONE, 100n)).toBe(0n);
+    expect(poolIsTradable(EMPTY_POOL)).toBe(false);
+  });
+});
+
+describe("bestTier routing", () => {
+  const arbTierPools = fc
+    .tuple(
+      fc.bigInt({ min: 10n ** 15n, max: 10n ** 23n }),
+      fc.bigInt({ min: 10n ** 15n, max: 10n ** 23n }),
+      fc.bigInt({ min: 10n ** 15n, max: 10n ** 23n }),
+      fc.bigInt({ min: 10n ** 13n, max: 10n ** 23n }),
+      fc.bigInt({ min: 10n ** 13n, max: 10n ** 23n }),
+      fc.bigInt({ min: 10n ** 13n, max: 10n ** 23n }),
+    )
+    .map(([y1, y2, y3, n1, n2, n3]): TierPool[] => [
+      { feeBps: 100, pool: pool({ reserveYes: y1, reserveNo: n1 }) },
+      { feeBps: 200, pool: pool({ reserveYes: y2, reserveNo: n2 }) },
+      { feeBps: 500, pool: pool({ reserveYes: y3, reserveNo: n3 }) },
+    ]);
+
+  it("property: routed output beats or matches every individual tier", () => {
+    fc.assert(
+      fc.property(arbTierPools, arbAmount, fc.boolean(), (pools, cstIn, yes) => {
+        const side = yes ? "yes" : "no";
+        const best = bestTier(side, pools, cstIn);
+        expect(best).not.toBeNull();
+        for (const { feeBps, pool: p } of pools) {
+          expect(best!.tokensOut >= quoteBet(side, p, cstIn, BigInt(feeBps))).toBe(true);
+        }
+      }),
+    );
+  });
+
+  it("ties go to the lowest fee; identical pools route to the cheapest tier", () => {
+    const pools: TierPool[] = [
+      { feeBps: 500, pool: pool() },
+      { feeBps: 100, pool: pool() },
+      { feeBps: 200, pool: pool() },
+    ];
+    expect(bestTier("yes", pools, 100n * ONE)?.feeBps).toBe(100);
+  });
+
+  it("skips unfunded pools and returns null when nothing is funded", () => {
+    const pools: TierPool[] = [
+      { feeBps: 100, pool: EMPTY_POOL },
+      { feeBps: 200, pool: pool() },
+    ];
+    expect(bestTier("yes", pools, ONE)?.feeBps).toBe(200);
+    expect(bestTier("yes", [{ feeBps: 100, pool: EMPTY_POOL }], ONE)).toBeNull();
+  });
+});
+
+describe("openPool", () => {
+  it("property: conserves both token sides exactly and prices at the request", () => {
+    fc.assert(
+      fc.property(arbLiquidity, arbProb, (cstIn, prob) => {
+        const { pool: p, sharesOut, excessYes, excessNo } = openPool(cstIn, prob);
+        expect(p.reserveYes + excessYes).toBe(cstIn);
+        expect(p.reserveNo + excessNo).toBe(cstIn);
+        expect(sharesOut).toBe(cstIn - DEAD_SHARES);
+        expect(p.totalShares).toBe(cstIn);
+        const implied = probabilityFloat(p) as number;
+        expect(Math.abs(implied - Number(prob) / 10_000)).toBeLessThan(0.0002);
+      }),
+    );
+  });
+
+  it("rejects deposits below the minimum and odds outside [1%, 99%]", () => {
+    expect(() => openPool(10n ** 15n - 1n, 5_000n)).toThrow(/minimum/);
+    expect(() => openPool(LIQ, 99n)).toThrow(/probability/);
+    expect(() => openPool(LIQ, 9_901n)).toThrow(/probability/);
+  });
+});
+
+describe("joinPool", () => {
+  const arbSkewedPool = fc
+    .tuple(arbLiquidity, arbProb, fc.bigInt({ min: 1n, max: 10n ** 23n }), fc.boolean(), arbFee)
+    .map(([liq, prob, skew, skewYes, fee]) => {
+      let p = openPool(liq, prob).pool;
+      p = applyBet(skewYes ? "yes" : "no", p, skew, fee).pool;
+      return p;
+    });
+
+  it("property: joining never moves the price and conserves tokens", () => {
+    fc.assert(
+      fc.property(arbSkewedPool, arbAmount, (p, cstIn) => {
+        const result = joinPool(p, cstIn);
+        if (result === null) return; // deposit too small to mint one share
+        const before = probabilityFloat(p) as number;
+        const after = probabilityFloat(result.pool) as number;
+        expect(Math.abs(after - before)).toBeLessThan(0.0002);
+        expect(result.depositYes + result.excessYes).toBe(cstIn);
+        expect(result.depositNo + result.excessNo).toBe(cstIn);
+      }),
+    );
+  });
+
+  it("property: a joiner's instant pro-rata claim never exceeds their deposit", () => {
+    fc.assert(
+      fc.property(arbSkewedPool, arbAmount, (p, cstIn) => {
+        const result = joinPool(p, cstIn);
+        if (result === null) return;
+        const claimYes = (result.pool.reserveYes * result.sharesOut) / result.pool.totalShares;
+        const claimNo = (result.pool.reserveNo * result.sharesOut) / result.pool.totalShares;
+        expect(claimYes <= result.depositYes).toBe(true);
+        expect(claimNo <= result.depositNo).toBe(true);
+      }),
+    );
+  });
+
+  it("returns null for drained pools and dust deposits", () => {
+    expect(joinPool(pool({ reserveYes: 0n, reserveNo: 100n }), ONE)).toBeNull();
+    // 1 wei into a pool whose max reserve exceeds totalShares by > 1x.
+    expect(joinPool(pool({ reserveYes: LIQ * 3n, totalShares: LIQ / 2n }), 1n)).toBeNull();
+  });
+});
+
+describe("removeLiquidity", () => {
+  it("property: add-then-remove can never pay out more than went in", () => {
     fc.assert(
       fc.property(
-        fc.bigInt({ min: 2n, max: 10n ** 24n }),
+        fc.bigInt({ min: 1n, max: 10n ** 23n }),
+        fc.boolean(),
         arbFee,
-        arbReserve,
-        arbReserve,
-        (cstIn, feeBps, rh, rl) => {
-          const pool = { reserveHigher: rh, reserveLower: rl };
-          const whole = applyBet("higher", pool, cstIn, feeBps).tokensOut;
-          const half = cstIn / 2n;
-          const first = applyBet("higher", pool, half, feeBps);
-          const second = applyBet("higher", first.pool, cstIn - half, feeBps);
-          const split = first.tokensOut + second.tokensOut;
-          const diff = split > whole ? split - whole : whole - split;
-          const bound = 4n + ceilDiv(rh, rl);
-          expect(diff <= bound).toBe(true);
+        fc.bigInt({ min: 10n ** 6n, max: 10n ** 24n }),
+        (skew, skewYes, fee, add) => {
+          let p = openPool(LIQ, 5_000n).pool;
+          p = applyBet(skewYes ? "yes" : "no", p, skew, fee).pool;
+          const joined = joinPool(p, add);
+          if (joined === null) return;
+          const { yesOut, noOut } = removeLiquidity(joined.pool, joined.sharesOut);
+          const yesTotal = yesOut + joined.excessYes;
+          const noTotal = noOut + joined.excessNo;
+          // Even valuing every returned token at its 1 CST ceiling.
+          expect(yesTotal <= add).toBe(true);
+          expect(noTotal <= add).toBe(true);
         },
       ),
     );
   });
-});
 
-describe("invertBet", () => {
-  it("property: exactly inverts applyBet (roundtrip through any bet)", () => {
+  it("property: withdrawals are pro-rata within rounding", () => {
     fc.assert(
-      fc.property(
-        arbAmount,
-        arbFee,
-        arbReserve,
-        arbReserve,
-        fc.constantFrom("higher" as const, "lower" as const),
-        (cstIn, feeBps, rh, rl, side) => {
-          const before = { reserveHigher: rh, reserveLower: rl };
-          const { tokensOut, pool: after } = applyBet(side, before, cstIn, feeBps);
-          const recovered = invertBet(side, after, cstIn, tokensOut, feeBps);
-          expect(recovered.reserveHigher).toBe(before.reserveHigher);
-          expect(recovered.reserveLower).toBe(before.reserveLower);
-        },
-      ),
-    );
-  });
-});
-
-describe("predictedCount", () => {
-  it("is the midpoint for a balanced pool", () => {
-    expect(predictedCount(RANGE, POOL)).toBe(700n);
-    expect(predictedCountFloat(RANGE, POOL)).toBeCloseTo(700, 6);
-  });
-
-  it("moves toward maxCount when LOWER reserve dominates", () => {
-    // More LOWER in the pool ⇒ HIGHER is pricier ⇒ market predicts higher count.
-    const pool = { reserveHigher: 1n * ONE, reserveLower: 99n * ONE };
-    expect(predictedCount(RANGE, pool)).toBe(200n + (1_000n * 99n) / 100n);
-  });
-
-  it("property: prediction always stays within [minCount, maxCount]", () => {
-    fc.assert(
-      fc.property(arbReserve, arbReserve, (rh, rl) => {
-        const p = predictedCount(RANGE, { reserveHigher: rh, reserveLower: rl });
-        expect(p >= RANGE.minCount && p <= RANGE.maxCount).toBe(true);
-        const f = predictedCountFloat(RANGE, { reserveHigher: rh, reserveLower: rl });
-        expect(f).toBeGreaterThanOrEqual(Number(RANGE.minCount));
-        expect(f).toBeLessThanOrEqual(Number(RANGE.maxCount));
-      }),
-    );
-  });
-
-  it("property: betting higher never lowers the prediction", () => {
-    fc.assert(
-      fc.property(arbAmount, arbFee, arbReserve, arbReserve, (cstIn, feeBps, rh, rl) => {
-        const pool = { reserveHigher: rh, reserveLower: rl };
-        const before = predictedCountFloat(RANGE, pool);
-        const after = predictedCountFloat(RANGE, applyBet("higher", pool, cstIn, feeBps).pool);
-        expect(after).toBeGreaterThanOrEqual(before - 1e-6);
+      fc.property(arbReserve, arbReserve, fc.bigInt({ min: 1n, max: 10n ** 24n }), (rY, rN, shares) => {
+        const total = 10n ** 24n;
+        const p = pool({ reserveYes: rY, reserveNo: rN, totalShares: total });
+        const { yesOut, noOut } = removeLiquidity(p, shares);
+        expect(yesOut).toBe((rY * shares) / total);
+        expect(noOut).toBe((rN * shares) / total);
       }),
     );
   });
 });
 
-describe("rangeFraction", () => {
-  it("clamps into [0,1] and maps the midpoint to 0.5", () => {
-    expect(rangeFraction(RANGE, 700)).toBeCloseTo(0.5);
-    expect(rangeFraction(RANGE, 0)).toBe(0);
-    expect(rangeFraction(RANGE, 99_999)).toBe(1);
+describe("fees and positions", () => {
+  it("pendingFees mirrors the MasterChef formula", () => {
+    expect(pendingFees(100n * ONE, ONE / 100n, 0n)).toBe(ONE);
+    expect(pendingFees(100n * ONE, ONE / 100n, ONE / 2n)).toBe(ONE / 2n);
   });
 
-  it("degenerate range returns 0 instead of dividing by zero", () => {
-    expect(rangeFraction({ minCount: 5n, maxCount: 5n }, 5)).toBe(0);
-  });
-});
-
-describe("payoutPerHigherFor / claimValue / positionValueAt", () => {
-  it("reproduces the contract's reference resolution (count=1000 in 200–1200 ⇒ 0.8)", () => {
-    expect(payoutPerHigherFor(RANGE, 1_000n)).toBe((8n * ONE) / 10n);
+  it("claimValue pays the winning side 1:1 and the losing side nothing", () => {
+    expect(claimValue(7n * ONE, 3n * ONE, true)).toBe(7n * ONE);
+    expect(claimValue(7n * ONE, 3n * ONE, false)).toBe(3n * ONE);
   });
 
-  it("clamps counts outside the range", () => {
-    expect(payoutPerHigherFor(RANGE, 10n)).toBe(0n);
-    expect(payoutPerHigherFor(RANGE, 50_000n)).toBe(ONE);
+  it("positionValueAtProbability interpolates between the two claims", () => {
+    expect(positionValueAtProbability(10n * ONE, 0n, 0.5)).toBeCloseTo(5);
+    expect(positionValueAtProbability(0n, 10n * ONE, 0.25)).toBeCloseTo(7.5);
   });
 
-  it("boundary counts pay exactly 0 and exactly 1", () => {
-    expect(payoutPerHigherFor(RANGE, RANGE.minCount)).toBe(0n);
-    expect(payoutPerHigherFor(RANGE, RANGE.maxCount)).toBe(ONE);
+  it("entryProbability is cost per token", () => {
+    expect(entryProbability(50n * ONE, 100n * ONE)).toBeCloseTo(0.5);
+    expect(entryProbability(ONE, 0n)).toBeNull();
   });
 
-  it("property: a complete set (1 HIGHER + 1 LOWER) is always worth exactly 1 CST", () => {
-    fc.assert(
-      fc.property(fc.bigInt({ min: 0n, max: 10n ** 13n }), fc.bigInt({ min: 1n, max: 10n ** 24n }), (count, amount) => {
-        const rate = payoutPerHigherFor(RANGE, count);
-        expect(claimValue(amount, amount, rate)).toBe(amount);
-      }),
-    );
-  });
-
-  it("property: claim value is monotone in the final count for a HIGHER position", () => {
-    fc.assert(
-      fc.property(
-        fc.bigInt({ min: 0n, max: 2_000n }),
-        fc.bigInt({ min: 0n, max: 2_000n }),
-        fc.bigInt({ min: 1n, max: 10n ** 24n }),
-        (c1, c2, tokens) => {
-          const [lo, hi] = c1 <= c2 ? [c1, c2] : [c2, c1];
-          const vLo = positionValueAt(RANGE, tokens, 0n, lo);
-          const vHi = positionValueAt(RANGE, tokens, 0n, hi);
-          expect(vHi >= vLo).toBe(true);
-        },
-      ),
-    );
-  });
-});
-
-describe("breakEvenCount / entryCount", () => {
-  it("pure HIGHER position breaks even where payout*tokens = cost", () => {
-    // 1000 HIGHER bought for 800 CST ⇒ f* = 0.8 ⇒ count 1000 in [200, 1200].
-    const be = breakEvenCount(RANGE, 1_000n * ONE, 0n, 800n * ONE);
-    expect(be).toBeCloseTo(1_000, 6);
-  });
-
-  it("pure LOWER position mirrors it", () => {
-    const be = breakEvenCount(RANGE, 0n, 1_000n * ONE, 800n * ONE);
-    // payout = tokens*(1-f) = cost ⇒ f = 0.2 ⇒ count 400.
-    expect(be).toBeCloseTo(400, 6);
-  });
-
-  it("balanced position has no break-even (value independent of count)", () => {
-    expect(breakEvenCount(RANGE, 5n, 5n, 5n)).toBeNull();
-  });
-
-  it("entryCount for a bet is the prediction the trader effectively bought at", () => {
-    const { tokensOut } = applyBet("higher", POOL, 1_000n * ONE, 0n);
-    const entry = entryCount(RANGE, "higher", 1_000n * ONE, tokensOut);
-    // Entry must sit above the pre-trade midpoint (700) but within range.
-    expect(entry).not.toBeNull();
-    expect(entry!).toBeGreaterThan(700);
-    expect(entry!).toBeLessThan(1_200);
-  });
-
-  it("entryCount is null for zero tokensOut", () => {
-    expect(entryCount(RANGE, "higher", 1n, 0n)).toBeNull();
-  });
-
-  it("property: at the break-even count the position value equals the cost (within rounding)", () => {
-    fc.assert(
-      fc.property(
-        fc.bigInt({ min: ONE, max: 10n ** 24n }),
-        fc.bigInt({ min: 1n, max: 10n ** 24n }),
-        (tokens, cost) => {
-          fc.pre(cost < tokens); // pure HIGHER break-even exists inside [0,1] only if cost < tokens
-          const be = breakEvenCount(RANGE, tokens, 0n, cost);
-          expect(be).not.toBeNull();
-          const value = positionValueAt(RANGE, tokens, 0n, BigInt(Math.round(be!)));
-          const tolerance = tokens / 500n + ONE; // one count step of value + rounding
-          const diff = value > cost ? value - cost : cost - value;
-          expect(diff <= tolerance).toBe(true);
-        },
-      ),
-    );
-  });
-});
-
-describe("minTokensOutForSlippage", () => {
-  it("applies bps tolerance rounding down", () => {
+  it("minTokensOutForSlippage rounds down and validates its input", () => {
     expect(minTokensOutForSlippage(10_000n, 50)).toBe(9_950n);
-    expect(minTokensOutForSlippage(3n, 1)).toBe(2n);
-    expect(minTokensOutForSlippage(10_000n, 0)).toBe(10_000n);
-  });
-
-  it("rejects out-of-range tolerances", () => {
     expect(() => minTokensOutForSlippage(1n, -1)).toThrow();
     expect(() => minTokensOutForSlippage(1n, 10_001)).toThrow();
   });
 
-  it("property: result is always <= quoted and >= quoted*(1-bps/10000)-1", () => {
-    fc.assert(
-      fc.property(arbAmount, fc.integer({ min: 0, max: 10_000 }), (quoted, bps) => {
-        const min = minTokensOutForSlippage(quoted, bps);
-        expect(min <= quoted).toBe(true);
-        const exact = (quoted * (BPS - BigInt(bps))) / BPS;
-        expect(min).toBe(exact);
-      }),
-    );
+  it("aggregateProbabilityFloat weights pools by their liquidity", () => {
+    const pools: TierPool[] = [
+      { feeBps: 100, pool: pool({ reserveYes: 100n * ONE, reserveNo: 100n * ONE }) },
+      { feeBps: 200, pool: pool({ reserveYes: 0n, reserveNo: 200n * ONE }) },
+    ];
+    // (100 + 200) NO over (200 + 200) total = 0.75.
+    expect(aggregateProbabilityFloat(pools)).toBeCloseTo(0.75);
+    expect(aggregateProbabilityFloat([])).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------
+// Differential tests: every number produced by the REAL contract
+// (script/GenerateVectors.s.sol) must match this library bit-for-bit.
+// ---------------------------------------------------------------------
+
+describe("differential vectors from the contract", () => {
+  it(`buyAmount matches the contract on ${vectors.buyAmount.length} magnitude-swept cases`, () => {
+    for (const v of vectors.buyAmount) {
+      expect(buyAmount(BigInt(v.reserveOut), BigInt(v.reserveIn), BigInt(v.net))).toBe(BigInt(v.tokensOut));
+    }
+  });
+
+  it(`replays ${vectors.flows.length} executed open→bet→join→remove flows exactly`, () => {
+    for (const v of vectors.flows) {
+      const feeBps = BigInt(v.tier);
+
+      // Open.
+      const opened = openPool(BigInt(v.liq), BigInt(v.probBps));
+      expect(opened.pool.reserveYes).toBe(BigInt(v.openReserveYes));
+      expect(opened.pool.reserveNo).toBe(BigInt(v.openReserveNo));
+      expect(opened.pool.totalShares).toBe(BigInt(v.openTotalShares));
+      expect(opened.sharesOut).toBe(BigInt(v.openShares));
+
+      // Bet.
+      const bet = applyBet(v.betYes ? "yes" : "no", opened.pool, BigInt(v.betAmount), feeBps);
+      expect(bet.tokensOut).toBe(BigInt(v.betOut));
+      expect(bet.pool.reserveYes).toBe(BigInt(v.postBetReserveYes));
+      expect(bet.pool.reserveNo).toBe(BigInt(v.postBetReserveNo));
+      expect(bet.pool.accFeePerShare).toBe(BigInt(v.postBetAccFeePerShare));
+      expect(bet.pool.feeReserve).toBe(BigInt(v.postBetFeeReserve));
+
+      // Join.
+      const joined = joinPool(bet.pool, BigInt(v.joinAmount));
+      expect(joined).not.toBeNull();
+      expect(joined!.sharesOut).toBe(BigInt(v.joinShares));
+      expect(joined!.pool.reserveYes).toBe(BigInt(v.postJoinReserveYes));
+      expect(joined!.pool.reserveNo).toBe(BigInt(v.postJoinReserveNo));
+      expect(joined!.pool.totalShares).toBe(BigInt(v.postJoinTotalShares));
+      // The actor's cumulative outcome balances after the join: excess from
+      // the open, plus the bet's payout, plus excess from the join.
+      const betYesTokens = v.betYes ? bet.tokensOut : 0n;
+      const betNoTokens = v.betYes ? 0n : bet.tokensOut;
+      expect(opened.excessYes + betYesTokens + joined!.excessYes).toBe(BigInt(v.balanceYesAfterJoin));
+      expect(opened.excessNo + betNoTokens + joined!.excessNo).toBe(BigInt(v.balanceNoAfterJoin));
+
+      // Remove.
+      const removed = removeLiquidity(joined!.pool, BigInt(v.removeShares));
+      expect(removed.yesOut).toBe(BigInt(v.removeYes));
+      expect(removed.noOut).toBe(BigInt(v.removeNo));
+      expect(removed.pool.reserveYes).toBe(BigInt(v.postRemoveReserveYes));
+      expect(removed.pool.reserveNo).toBe(BigInt(v.postRemoveReserveNo));
+      expect(removed.pool.totalShares).toBe(BigInt(v.postRemoveTotalShares));
+
+      // Fee accounting through the whole flow, to the wei. The single actor
+      // opened the pool (feeDebt 0), earned the bet's fee, then had it paid
+      // out automatically when joining (which also reset their debt), so the
+      // remove pays no further fees.
+      const pendingAtJoin = pendingFees(BigInt(v.openShares), BigInt(v.postBetAccFeePerShare), 0n);
+      expect(BigInt(v.postJoinFeeReserve)).toBe(BigInt(v.postBetFeeReserve) - pendingAtJoin);
+      expect(BigInt(v.removeFees)).toBe(0n);
+      expect(BigInt(v.postRemoveFeeReserve)).toBe(BigInt(v.postJoinFeeReserve));
+      expect(BigInt(v.postRemoveAccFeePerShare)).toBe(BigInt(v.postBetAccFeePerShare));
+    }
   });
 });

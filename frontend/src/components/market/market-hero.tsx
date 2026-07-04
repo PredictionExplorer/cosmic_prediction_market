@@ -1,32 +1,32 @@
 "use client";
 
-import type { MarketSnapshot } from "@/lib/market";
-import { displayedPrediction, marketPhase } from "@/lib/market";
-import type { PricePoint } from "@/lib/history";
-import { formatCount, formatCountPrecise } from "@/lib/format";
+import type { ProbabilityPoint } from "@/lib/history";
+import type { RoundSnapshot } from "@/lib/market";
+import { displayedProbability, roundPhase } from "@/lib/market";
+import { formatCount } from "@/lib/format";
 import { AnimatedNumber } from "@/components/ui/animated-number";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { PredictionChart } from "./prediction-chart";
-import { PredictionGauge } from "./prediction-gauge";
+import { ProbabilityChart } from "./probability-chart";
+import { ThresholdRace } from "./threshold-race";
 
 interface MarketHeroProps {
-  snapshot: MarketSnapshot;
-  history: readonly PricePoint[];
-  /** Break-even of the connected user's position, for the gauge marker. */
-  breakEven?: number | null;
+  snapshot: RoundSnapshot;
+  history: readonly ProbabilityPoint[];
 }
 
 const PHASE_BADGE = {
+  uninitialized: { tone: "muted" as const, label: "Awaiting first liquidity", pulse: false },
   live: { tone: "higher" as const, label: "Live", pulse: true },
+  decided: { tone: "ended" as const, label: "Threshold crossed — YES won, awaiting resolution", pulse: true },
   ended: { tone: "ended" as const, label: "Round ended — awaiting resolution", pulse: true },
   resolved: { tone: "nova" as const, label: "Resolved", pulse: false },
 };
 
-/** The market's centerpiece: what the crowd currently predicts. */
-export function MarketHero({ snapshot, history, breakEven }: MarketHeroProps) {
-  const phase = marketPhase(snapshot);
-  const prediction = displayedPrediction(snapshot);
+/** The market's centerpiece: will this round out-gesture the last one? */
+export function MarketHero({ snapshot, history }: MarketHeroProps) {
+  const phase = roundPhase(snapshot);
+  const probability = displayedProbability(snapshot);
   const badge = PHASE_BADGE[phase];
 
   return (
@@ -36,73 +36,67 @@ export function MarketHero({ snapshot, history, breakEven }: MarketHeroProps) {
           <Badge tone={badge.tone} pulse={badge.pulse} data-testid="phase-badge">
             {badge.label}
           </Badge>
-          <Badge tone="muted">Round {snapshot.round.toString()}</Badge>
+          <Badge tone="muted">Round {snapshot.roundId.toString()}</Badge>
         </div>
         <p className="text-xs text-ink-faint">
-          Gestures so far:{" "}
-          <span className="font-mono font-semibold text-ink" data-testid="live-count">
-            {formatCount(snapshot.liveGestureCount)}
-          </span>
+          Beat last round&apos;s{" "}
+          <span className="font-mono font-semibold text-ended" data-testid="hero-threshold">
+            {formatCount(snapshot.threshold)}
+          </span>{" "}
+          gestures
         </p>
       </div>
 
       <div className="mt-6 flex flex-col items-center text-center">
         <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-ink-dim">
-          {phase === "resolved" ? "Final gesture count" : "The market predicts"}
+          {phase === "resolved"
+            ? snapshot.yesWon
+              ? "Resolved: YES — more gestures than last round"
+              : "Resolved: NO — didn't beat last round"
+            : "Chance this round beats the last one"}
         </p>
         <div className="mt-1 font-display text-6xl font-bold tabular-nums sm:text-7xl">
-          {phase === "resolved" ? (
-            <span className="text-ended" data-testid="final-count">
-              {formatCount(snapshot.finalGestureCount)}
+          {probability === null ? (
+            <span className="text-ink-faint" data-testid="hero-no-liquidity">
+              —
             </span>
           ) : (
-            <AnimatedNumber
-              value={prediction}
-              format={formatCountPrecise}
-              className="text-glow-nova text-ink"
-            />
+            <span className={phase === "resolved" ? "text-ended" : "text-glow-nova text-ink"} data-testid="hero-probability">
+              <AnimatedNumber
+                value={probability * 100}
+                format={(v) => `${v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`}
+              />
+            </span>
           )}
         </div>
         <p className="mt-1 text-sm text-ink-dim">
           {phase === "resolved" ? (
             <>
-              gestures — HIGHER paid{" "}
-              <span className="font-mono text-higher">
-                {(Number(snapshot.payoutPerHigher) / 1e18).toLocaleString("en-US", {
-                  maximumFractionDigits: 3,
-                })}
+              final count{" "}
+              <span className="font-mono font-semibold text-ink" data-testid="hero-final-count">
+                {formatCount(snapshot.currentCount)}
               </span>{" "}
-              CST, LOWER paid{" "}
-              <span className="font-mono text-lower">
-                {(1 - Number(snapshot.payoutPerHigher) / 1e18).toLocaleString("en-US", {
-                  maximumFractionDigits: 3,
-                })}
-              </span>{" "}
-              CST per token
+              vs threshold {formatCount(snapshot.threshold)} — winning tokens pay 1 CST each
             </>
+          ) : probability === null ? (
+            <>no liquidity yet — the first LP opens the market at their chosen odds</>
           ) : (
-            <>gestures by the end of this round</>
+            <>implied by the pools, weighted by liquidity</>
           )}
         </p>
       </div>
 
       <div className="mt-8">
-        <PredictionGauge
-          min={Number(snapshot.minCount)}
-          max={Number(snapshot.maxCount)}
-          prediction={prediction}
-          liveCount={Number(snapshot.liveGestureCount)}
-          breakEven={breakEven}
+        <ThresholdRace
+          currentCount={Number(snapshot.currentCount)}
+          threshold={Number(snapshot.threshold)}
           resolved={phase === "resolved"}
+          yesWon={snapshot.yesWon}
         />
       </div>
 
       <div className="mt-6">
-        <PredictionChart
-          points={history}
-          min={Number(snapshot.minCount)}
-          max={Number(snapshot.maxCount)}
-        />
+        <ProbabilityChart points={history} />
       </div>
     </Card>
   );

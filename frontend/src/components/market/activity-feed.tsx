@@ -1,9 +1,9 @@
 "use client";
 
-import { ArrowDown, ArrowUp, CheckCheck, Flag, Layers, Undo2 } from "lucide-react";
+import { Check, CheckCheck, Droplets, Flag, HandCoins, Layers, Undo2, Waves, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ActivityEvent } from "@/hooks/use-market-events";
-import { formatCount, formatCst, timeAgo } from "@/lib/format";
+import { formatBps, formatCount, formatCst, timeAgo } from "@/lib/format";
 import { AddressLink } from "@/components/ui/address-link";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,37 +14,63 @@ interface ActivityFeedProps {
   maxItems?: number;
 }
 
+function iconBubble(tone: "higher" | "lower" | "nova" | "ended", child: ReactNode): ReactNode {
+  const classes = {
+    higher: "bg-higher/12 text-higher",
+    lower: "bg-lower/12 text-lower",
+    nova: "bg-nova/12 text-nova-bright",
+    ended: "bg-ended/12 text-ended",
+  }[tone];
+  return <span className={`flex size-7 items-center justify-center rounded-full ${classes}`}>{child}</span>;
+}
+
 function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
   switch (event.kind) {
     case "bet": {
-      const higher = event.side === "higher";
+      const yes = event.side === "yes";
       return {
-        icon: higher ? (
-          <span className="flex size-7 items-center justify-center rounded-full bg-higher/12 text-higher">
-            <ArrowUp className="size-3.5" aria-hidden />
-          </span>
-        ) : (
-          <span className="flex size-7 items-center justify-center rounded-full bg-lower/12 text-lower">
-            <ArrowDown className="size-3.5" aria-hidden />
-          </span>
-        ),
+        icon: iconBubble(yes ? "higher" : "lower", yes ? <Check className="size-3.5" aria-hidden /> : <X className="size-3.5" aria-hidden />),
         text: (
           <>
             bet <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span> on{" "}
-            <span className={higher ? "font-semibold text-higher" : "font-semibold text-lower"}>
-              {higher ? "HIGHER" : "LOWER"}
-            </span>
+            <span className={yes ? "font-semibold text-higher" : "font-semibold text-lower"}>{yes ? "YES" : "NO"}</span>
+            {event.feeBps !== null && <span className="text-ink-faint"> · {formatBps(BigInt(event.feeBps))} pool</span>}
           </>
         ),
       };
     }
+    case "add":
+      return {
+        icon: iconBubble("nova", <Droplets className="size-3.5" aria-hidden />),
+        text: (
+          <>
+            added <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span> of liquidity
+            {event.feeBps !== null && <span className="text-ink-faint"> · {formatBps(BigInt(event.feeBps))} pool</span>}
+          </>
+        ),
+      };
+    case "remove":
+      return {
+        icon: iconBubble("nova", <Waves className="size-3.5" aria-hidden />),
+        text: (
+          <>
+            removed liquidity
+            {event.feeBps !== null && <span className="text-ink-faint"> from the {formatBps(BigInt(event.feeBps))} pool</span>}
+          </>
+        ),
+      };
+    case "feesClaimed":
+      return {
+        icon: iconBubble("higher", <HandCoins className="size-3.5" aria-hidden />),
+        text: (
+          <>
+            claimed <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span> in LP fees
+          </>
+        ),
+      };
     case "mint":
       return {
-        icon: (
-          <span className="flex size-7 items-center justify-center rounded-full bg-nova/12 text-nova-bright">
-            <Layers className="size-3.5" aria-hidden />
-          </span>
-        ),
+        icon: iconBubble("nova", <Layers className="size-3.5" aria-hidden />),
         text: (
           <>
             minted <span className="font-mono font-semibold text-ink">{formatCst(event.amount)}</span> sets
@@ -53,11 +79,7 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
       };
     case "redeem":
       return {
-        icon: (
-          <span className="flex size-7 items-center justify-center rounded-full bg-nova/12 text-nova-bright">
-            <Undo2 className="size-3.5" aria-hidden />
-          </span>
-        ),
+        icon: iconBubble("nova", <Undo2 className="size-3.5" aria-hidden />),
         text: (
           <>
             redeemed <span className="font-mono font-semibold text-ink">{formatCst(event.amount)}</span> sets for CST
@@ -66,25 +88,20 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
       };
     case "resolved":
       return {
-        icon: (
-          <span className="flex size-7 items-center justify-center rounded-full bg-ended/12 text-ended">
-            <Flag className="size-3.5" aria-hidden />
-          </span>
-        ),
+        icon: iconBubble("ended", <Flag className="size-3.5" aria-hidden />),
         text: (
           <>
-            market resolved at{" "}
-            <span className="font-mono font-semibold text-ended">{formatCount(event.secondary)} gestures</span>
+            round resolved{" "}
+            <span className={event.yesWon ? "font-semibold text-higher" : "font-semibold text-lower"}>
+              {event.yesWon ? "YES" : "NO"}
+            </span>{" "}
+            at <span className="font-mono font-semibold text-ended">{formatCount(event.secondary)} gestures</span>
           </>
         ),
       };
     case "claimed":
       return {
-        icon: (
-          <span className="flex size-7 items-center justify-center rounded-full bg-higher/12 text-higher">
-            <CheckCheck className="size-3.5" aria-hidden />
-          </span>
-        ),
+        icon: iconBubble("higher", <CheckCheck className="size-3.5" aria-hidden />),
         text: (
           <>
             claimed <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span>
@@ -94,7 +111,7 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
   }
 }
 
-/** Reverse-chronological feed of everything happening in the market. */
+/** Reverse-chronological feed of everything happening in the round. */
 export function ActivityFeed({ events, isLoading, maxItems = 40 }: ActivityFeedProps) {
   return (
     <Card className="p-5" data-testid="activity-feed">
@@ -106,8 +123,11 @@ export function ActivityFeed({ events, isLoading, maxItems = 40 }: ActivityFeedP
           ))}
         </div>
       ) : events.length === 0 ? (
-        <p className="mt-4 rounded-xl border border-dashed border-line p-6 text-center text-sm text-ink-faint" data-testid="activity-empty">
-          No activity yet — be the first to place a bet.
+        <p
+          className="mt-4 rounded-xl border border-dashed border-line p-6 text-center text-sm text-ink-faint"
+          data-testid="activity-empty"
+        >
+          No activity yet this round — provide liquidity or place the first bet.
         </p>
       ) : (
         <ul className="scroll-thin mt-4 max-h-105 space-y-1 overflow-y-auto pr-1">
@@ -120,9 +140,7 @@ export function ActivityFeed({ events, isLoading, maxItems = 40 }: ActivityFeedP
               >
                 {icon}
                 <div className="min-w-0 flex-1 text-sm text-ink-dim">
-                  {event.user ? (
-                    <AddressLink address={event.user} className="mr-1.5 align-baseline" />
-                  ) : null}
+                  {event.user ? <AddressLink address={event.user} className="mr-1.5 align-baseline" /> : null}
                   {text}
                 </div>
                 <div className="shrink-0 text-right">

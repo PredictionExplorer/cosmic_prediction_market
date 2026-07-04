@@ -1,64 +1,94 @@
 # Gesture Market
 
-A minimal scalar prediction market on **how many gestures (bids) the current
-[Cosmic Signature](https://cosmicsignature.com) round will end with**, denominated
-in CST and resolved trustlessly from the Cosmic Signature game contract on
-Arbitrum One.
+A perpetual series of binary prediction markets on one question, asked fresh
+every [Cosmic Signature](https://cosmicsignature.com) round:
 
-The whole market is one dependency-free contract:
-[`src/GestureMarket.sol`](src/GestureMarket.sol) (~150 lines of logic).
+> **Will this round end with more gestures (bids) than the previous round?**
 
-A polished web app for the market lives in [`frontend/`](frontend/README.md)
-(Next.js + wagmi, deployable to Vercel): live prediction gauge and chart,
-one-click bets with exact client-side quotes, position what-if explorer,
-resolution and claiming.
+Denominated in CST, resolved trustlessly from the Cosmic Signature game
+contract on Arbitrum One, with open multi-LP liquidity across **fee tiers the
+LPs choose themselves** (Uniswap-style). The whole series — every round,
+forever — is one dependency-free singleton contract with no owner, no admin
+keys, and no upgradability:
+[`src/GestureSeriesMarket.sol`](src/GestureSeriesMarket.sol).
+
+A polished web app lives in [`frontend/`](frontend/README.md) (Next.js +
+wagmi, deployable to Vercel): live YES-probability gauge and chart, the
+count-vs-threshold race, one-click bets auto-routed to the best fee tier,
+liquidity provision with per-tier fee earnings, and round navigation for
+resolving and claiming past rounds.
 
 ## How it works
 
-Instead of a yes/no question like "will there be more than 800 bids?", the market
-prices the number itself using two complementary outcome tokens over a range
-`[minCount, maxCount]`:
+- **Markets launch themselves.** The first `addLiquidity` for the current
+  round initializes that round's market, reading the threshold — the previous
+  round's final gesture count, frozen the moment this round started — straight
+  from the game. No per-round deployments, no keepers, no configuration.
+- **Two outcome tokens per round.** 1 CST mints a complete set of
+  1 YES + 1 NO (`mintSets`), and a complete set always redeems for 1 CST
+  (`redeemSets`), so the contract is fully collateralized by construction.
+  YES pays 1 CST iff the final count is **strictly** greater than the
+  threshold (a tie means NO wins); NO pays 1 CST otherwise.
+- **LPs choose their fee.** Liquidity lives in Uniswap-style constant-product
+  pools (x·y=k) between YES and NO — one pool per fee tier (default deploy:
+  1%, 2%, 5%). Anyone can provide liquidity into the tier whose fee they're
+  willing to accept and earns that fee on every bet in their pool, pro rata by
+  LP shares, claimable anytime (`claimFees`). A pool's implied probability is
+  `reserveNo / (reserveYes + reserveNo)`.
+  - The **first LP** of a pool opens it at their chosen YES probability (the
+    seeding returns the surplus side to them as outcome tokens).
+  - Later LPs join at the pool's current ratio; excess tokens are credited
+    back. Rounding always favors incumbent LPs.
+- **Betting** (`betYes`/`betNo`) mints sets with your CST and swaps the
+  unwanted side into the pool, so you hold only your side. `betYesBest` /
+  `betNoBest` route to whichever tier gives the best all-in execution —
+  cross-tier prices stay aligned because buying both sides across tiers and
+  redeeming pairs is a riskless arbitrage. To exit early, buy the opposite
+  side and `redeemSets`.
+- **Resolution** is permissionless. When the round ends (the game's round
+  counter advances), `resolve(round)` compares the final count against the
+  threshold. And because the gesture count is public and **only ever
+  increases**, the instant it exceeds the threshold mid-round YES is already
+  certain: betting and liquidity-adding halt atomically in that same block,
+  and `resolve` fires early.
+- **Claiming**: after resolution `claim(round)` pays winning tokens 1:1.
+  LP positions are never confiscated or swept: `removeLiquidity` works at ANY
+  time — live, decided, or after resolution — paying pro-rata reserves plus
+  accrued fees.
 
-- **1 CST mints 1 HIGHER + 1 LOWER** (a "complete set"), and a complete set is
-  always worth exactly 1 CST at resolution. The contract is therefore fully
-  collateralized at all times.
-- HIGHER and LOWER trade against each other in a **Uniswap-style constant-product
-  pool** (`x * y = k`). The pool's marginal price of HIGHER, mapped over the
-  range, is the market's live consensus prediction:
+## Battle hardening
 
-  ```
-  predictedCount = minCount + (maxCount - minCount) * reserveLower / (reserveHigher + reserveLower)
-  ```
+Each mitigation below is enforced by the contract and proven by a scripted
+attack in [`test/GestureSeriesMarketHardening.t.sol`](test/GestureSeriesMarketHardening.t.sol):
 
-- **Betting**: `betHigher(cstIn, minTokensOut)` takes your CST, mints sets, and
-  swaps the LOWER half into the pool so you hold only HIGHER (`betLower` is the
-  mirror image). Buying HIGHER pushes the predicted count up; buying LOWER pushes
-  it down. Your effective entry price is the prediction you traded at.
-- **Resolution**: a round ends when its main prize is claimed, which increments
-  the game's `roundNum`. From that moment anyone can call `resolve()`, which
-  reads the round's final gesture count from the game contract, clamps it into
-  the range, and fixes the payouts:
-
-  ```
-  f = (finalCount - minCount) / (maxCount - minCount)   // clamped to [0, 1]
-  1 HIGHER pays f CST,  1 LOWER pays (1 - f) CST
-  ```
-
-  So if you bought HIGHER while the market predicted 700 and the round finishes
-  at 1,000, each of your HIGHER tokens is worth more CST than you paid for it —
-  payouts scale linearly with how far the count lands from your entry.
-- **Claiming**: after resolution, `claim()` pays out all your tokens at the fixed
-  rates.
-- **Exiting early**: buy the opposite side, then `redeemSets` matched
-  HIGHER/LOWER pairs back into CST at any time while the round is live.
-- **Liquidity**: the deployer is the sole LP. The pool opens with equal reserves
-  (prediction = range midpoint); at resolution the pool's leftover tokens plus
-  all trading fees (`feeBps` per bet) go back to the deployer. No LP shares, no
-  add/remove liquidity.
-
-Trading halts automatically the instant the round ends, because every trading
-function requires `game.roundNum()` to still equal the market's round — there is
-no window to bet on an already-known outcome before `resolve()` is called.
+- **LP pulls liquidity right before your bet** (front-run): every bet carries
+  a mandatory `minTokensOut` floor computed from the quote you saw — worse
+  execution reverts instead of filling. Same-class guards exist everywhere:
+  `minSharesOut` on adds, `minYesOut`/`minNoOut` on removes.
+- **Sandwiches and stale transactions**: slippage floors cap the damage at
+  exactly your tolerance, and every mutating call takes a `deadline`.
+- **Betting on a decided outcome**: bets and adds check the live count
+  against the threshold in the same call — there is no block in which
+  certainty can be traded at stale prices. Round-over trading is blocked by
+  the round counter.
+- **First-depositor share inflation** (the ERC4626/Uniswap classic): minimum
+  first deposit (0.001 CST), 1000 dead shares locked forever on every pool's
+  first mint, zero-share mints revert, and all share math rounds against the
+  depositor. The scripted attack recovers dust, not capital.
+- **JIT fee sniping**: a just-in-time LP inherits zero pre-join fees, skims at
+  most its pro-rata slice of the single sniped bet, and exits holding
+  inventory risk rather than free cash (bounded in tests; Arbitrum's FCFS
+  ordering makes the game pointless in practice anyway).
+- **Donations**: reserves and balances are internal accounting — direct CST
+  transfers move no price, no share value, no payout.
+- **Reentrancy**: a contract-wide guard plus strict checks-effects-interactions
+  on every path (exercised with a malicious callback token).
+- **Fee/solvency accounting**: bet fees live in an explicit per-pool escrow
+  (`feeReserve`) with a MasterChef-style accumulator, so the invariant
+  *contract CST = outstanding sets + fee escrows* holds **exactly, to the
+  wei** — re-checked after every call of every invariant campaign.
+- **No trust surface**: no owner, no pause, no upgrade path; rounding always
+  favors the contract, so it can never owe more than it holds.
 
 ## Cosmic Signature integration
 
@@ -67,8 +97,8 @@ The market reads three getters from the game proxy
 
 | Getter | Used for |
 |---|---|
-| `roundNum()` | market's round at deploy; round-over detection (`> round`) |
-| `bidderAddresses(round)` | the round's total gesture count (`numItems`) |
+| `roundNum()` | round liveness/rollover; init + resolution gating |
+| `bidderAddresses(round)` | gesture counts: threshold (round−1) and outcome (round) |
 | `token()` | the CST token address |
 
 Arbitrum One addresses:
@@ -82,71 +112,78 @@ Requires [Foundry](https://getfoundry.sh).
 
 ```bash
 forge build
-forge test                                   # full suite: unit + fuzz + invariant
+forge test                                   # full suite: unit + fuzz + invariant + attacks
 FOUNDRY_PROFILE=heavy forge test             # long fuzzing campaign (50k fuzz runs,
                                              # 512x256 invariant campaigns)
 ARBITRUM_RPC_URL=https://arb1.arbitrum.io/rpc \
   forge test --match-contract ForkTest -vv   # optional: validate against the live game
 ```
 
-The test suite is organized in four layers:
+The test suite is organized in four layers plus a differential bridge to the
+frontend:
 
-- [`test/GestureMarket.t.sol`](test/GestureMarket.t.sol) — unit tests for every
-  function: happy paths, guards, boundary counts, idempotent claims.
-- [`test/GestureMarketFuzz.t.sol`](test/GestureMarketFuzz.t.sol) — property-based
-  fuzz tests. Each states an economic/safety property that must hold for all
-  inputs: the pool can never be drained or lose value (`x*y=k` monotone), quotes
-  always equal executed bets, the AMM is path-independent (splitting a bet gains
-  nothing), no CST can be extracted pre-resolution beyond what was deposited,
-  payouts are convex combinations of token balances, fees accrue to the wei, and
-  the full lifecycle conserves CST for any fee, actors, and final count.
-- [`test/GestureMarketInvariant.t.sol`](test/GestureMarketInvariant.t.sol) —
-  stateful invariant testing. A handler drives random interleavings of the whole
-  lifecycle (bets, sets, round end, resolve, claims) with `fail_on_revert`
-  enabled, re-checking after every call that the market is exactly
-  collateralized, solvent for all remaining claims, in-range, and coherent; after
-  every campaign the market is force-drained to prove everyone can always be paid
-  with at most a few wei of rounding dust left.
-- [`test/GestureMarketHardening.t.sol`](test/GestureMarketHardening.t.sol) —
-  adversarial tests: reentrancy attacks on `claim`/`redeemSets` via a malicious
-  callback token, false-returning ERC20s, unsolicited CST donations, degenerate
-  ranges (binary and widest-allowed), parallel markets, and post-resolution
-  trading attempts.
+- [`test/GestureSeriesMarket.t.sol`](test/GestureSeriesMarket.t.sol) — unit
+  tests for every function: lazy initialization, tie semantics, early
+  resolution, per-tier isolation, LP share/fee exactness, every guard.
+- [`test/GestureSeriesMarketFuzz.t.sol`](test/GestureSeriesMarketFuzz.t.sol) —
+  property-based fuzz tests. Each states an economic/safety property that must
+  hold for all inputs: CST conservation across the whole lifecycle, x·y=k
+  monotonicity, quotes equal execution, path independence, LP joins can't
+  extract value from incumbents, add-then-remove never profits, fee escrow
+  exact to the wei, best-tier routing beats every single tier, and the
+  resolution truth table matches strict comparison for all counts.
+- [`test/GestureSeriesMarketInvariant.t.sol`](test/GestureSeriesMarketInvariant.t.sol)
+  — stateful invariant testing with `fail_on_revert`. A handler drives random
+  interleavings of the full multi-round lifecycle (LPs in and out of every
+  tier, bets, sets, gesture arrivals, threshold crossings, round rollovers,
+  early/normal resolutions, claims) while ghost variables track every wei.
+  After every call: exact collateralization, coherent share ledgers, fee
+  solvency. After every campaign: force-drain everything and prove everyone is
+  paid in full, with the retained remainder equal to dead-share reserves plus
+  fee dust — exactly.
+- [`test/GestureSeriesMarketHardening.t.sol`](test/GestureSeriesMarketHardening.t.sol)
+  — the attack suite described above, one scripted adversary per mitigation.
+- [`script/GenerateVectors.s.sol`](script/GenerateVectors.s.sol) — executes
+  hundreds of real contract flows and dumps them to
+  `frontend/src/test/fixtures/contract-vectors.json`; the frontend's math
+  library must match **bit-for-bit** (CI regenerates and fails on drift).
 
 Fuzzing intensity is configured per profile in [`foundry.toml`](foundry.toml);
 crank the `heavy` numbers up arbitrarily for overnight runs.
 
 ## Deployment
 
-One market per round; deploy while the round you want to bet on is live. The
-deployer wallet needs `INITIAL_LIQUIDITY` CST (the script pre-approves the
-market's predicted address, since the constructor pulls the liquidity).
+Deploy the singleton **once**; every future round runs on it automatically:
 
 ```bash
-MIN_COUNT=0 MAX_COUNT=2000 FEE_BPS=100 INITIAL_LIQUIDITY=1000000000000000000000 \
+FEE_TIERS=100,200,500 \
 forge script script/Deploy.s.sol \
   --rpc-url $ARBITRUM_RPC_URL --private-key $PRIVATE_KEY --broadcast
 ```
 
-Pick `MIN_COUNT`/`MAX_COUNT` generously around your expectation; final counts
-outside the range simply pay out as if they landed on the nearest bound.
+No pre-funding needed — liquidity arrives permissionlessly per round, from
+anyone, into the fee tier of their choice.
 
-For frontend development there is also a local sandbox
+For frontend development there is a local sandbox
 ([`script/DeployLocal.s.sol`](script/DeployLocal.s.sol)) that deploys a mock
-game + mock CST + market on anvil; see
+game + mock CST + the series with seeded liquidity on anvil; see
 [`frontend/README.md`](frontend/README.md).
 
 ## Design notes and trade-offs
 
-- **Live information is priced in, by design.** The current gesture count is
-  public while the round runs, so the prediction should always sit at or above
-  it — like a live over/under line. Late informed trading costs the LP money;
-  the per-bet fee is the compensation. Size liquidity accordingly.
-- **Outcome manipulation is possible but costly.** Someone holding HIGHER could
-  place extra gestures to raise the count. Each gesture costs ETH/CST, so keeping
-  pool liquidity modest keeps manipulation unprofitable.
-- **The game is an owner-upgradeable proxy.** The market trusts its `roundNum`
-  and `bidderAddresses` getters.
-- **Rounding always favors the pool/contract** (swap outputs round down against
-  the trader, claims round down), so the contract can never owe more CST than it
-  holds; at most a few wei of dust are left behind.
+- **Live information is priced in, by design.** The gesture count is public
+  while the round runs, so this is a live over/under against last round's
+  count. Certainty accumulates monotonically — and asymmetrically: YES can
+  become certain mid-round (handled by early resolution + the atomic trading
+  halt), NO can't before the round ends. Late informed trading costs LPs
+  money; the per-bet fee is the compensation, and LPs both pick that fee and
+  can leave at any moment. Size positions accordingly.
+- **Outcome manipulation is possible but costly.** Someone holding YES could
+  place extra gestures to push the count over the threshold. Each gesture
+  costs real ETH/CST in the game, so modest pool sizes keep manipulation
+  unprofitable.
+- **The game is an owner-upgradeable proxy.** The market trusts its
+  `roundNum` and `bidderAddresses` getters.
+- **Dead-share dust is the cost of inflation resistance.** Each pool
+  permanently locks 1000 share-wei plus the CST backing them (wei-scale);
+  in exchange, first-depositor inflation attacks are structurally dead.

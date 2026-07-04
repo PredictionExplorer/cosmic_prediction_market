@@ -1,14 +1,22 @@
 import { BaseError, ContractFunctionRevertedError, UserRejectedRequestError } from "viem";
 
-/** Human explanations for every custom error the market can revert with. */
+/** Human explanations for every custom error the series market can revert with. */
 const CONTRACT_ERRORS: Record<string, string> = {
-  TradingClosed: "The round has ended — trading is closed. You can resolve the market and claim winnings.",
-  NotResolvable: "The round is still live, so the market can't be resolved yet.",
-  AlreadyResolved: "The market has already been resolved.",
-  NotResolved: "The market hasn't been resolved yet — resolve it first, then claim.",
+  RoundNotActive: "This round is no longer live — trading and liquidity are closed for it.",
+  RoundNotInitialized: "This round's market hasn't been opened yet. Adding liquidity opens it.",
+  OutcomeDecided:
+    "The gesture count already crossed the threshold, so YES has won — betting and adding liquidity are closed. The round can be resolved now.",
+  NotResolvable: "The outcome isn't known yet — the round is live and the count hasn't crossed the threshold.",
+  AlreadyResolved: "This round has already been resolved.",
+  NotResolved: "This round hasn't been resolved yet — resolve it first, then claim.",
   Slippage: "Price moved beyond your slippage tolerance. Try again or raise the tolerance.",
+  DeadlineExpired: "The transaction took too long and expired. Please try again.",
+  InsufficientLiquidity: "Not enough liquidity in that pool (or the deposit is too small).",
+  InsufficientShares: "You don't hold enough shares or paired tokens for that.",
+  InvalidFeeTier: "That fee tier doesn't exist on this market.",
+  InvalidParams: "Invalid parameters.",
   TransferFailed: "The CST token transfer failed. Check your balance and try again.",
-  InvalidParams: "Invalid market parameters.",
+  ReentrantCall: "The transaction was rejected by the reentrancy guard.",
 };
 
 /**

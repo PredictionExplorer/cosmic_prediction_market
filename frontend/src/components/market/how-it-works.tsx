@@ -1,26 +1,26 @@
-import { ArrowUpDown, Award, Scale, Timer } from "lucide-react";
+import { Award, Droplets, Repeat, Timer } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 const STEPS = [
   {
-    icon: Scale,
-    title: "One number, two sides",
-    body: "The market prices the round's final gesture (bid) count. HIGHER tokens gain value as the expected count rises, LOWER tokens as it falls — the live prediction is where the two sides balance.",
+    icon: Repeat,
+    title: "One question, every round",
+    body: "Will this Cosmic Signature round end with more gestures (bids) than the previous one? YES pays 1 CST per token if it does, NO pays 1 CST if it doesn't (a tie counts as NO). A new market opens itself every round.",
   },
   {
-    icon: ArrowUpDown,
-    title: "Bet with CST",
-    body: "Betting swaps your CST into one side through an automated pool, so you always trade at the market's current prediction. Your entry is the count you effectively bought at.",
+    icon: Droplets,
+    title: "LPs pick their own fee",
+    body: "Liquidity lives in per-fee-tier pools (1% / 2% / 5%, Uniswap-style). Provide into the tier whose fee you're willing to accept and earn it on every bet, pro rata. Withdraw any time.",
   },
   {
     icon: Timer,
-    title: "Trading stops automatically",
-    body: "The instant the round's main prize is claimed, the market locks. Nobody can bet on a known outcome — resolution reads the final count straight from the game contract.",
+    title: "No betting on known outcomes",
+    body: "The gesture count is public and only goes up. The instant it crosses last round's count, YES is certain: betting halts in the same block and anyone can resolve early. Round over works the same way.",
   },
   {
     icon: Award,
-    title: "Linear payouts, fully backed",
-    body: "At resolution each HIGHER pays proportionally to where the count lands in the range; LOWER pays the complement. Every HIGHER+LOWER pair is always worth exactly 1 CST, so the market can always pay.",
+    title: "Fully backed, no keys",
+    body: "1 CST always mints 1 YES + 1 NO, and a pair always redeems for 1 CST, so every payout is collateralized by construction. No owner, no admin keys, no upgrades.",
   },
 ] as const;
 

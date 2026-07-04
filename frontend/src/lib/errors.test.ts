@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { BaseError, ContractFunctionRevertedError, UserRejectedRequestError } from "viem";
-import { gestureMarketAbi } from "./abi/gesture-market";
+import { gestureSeriesMarketAbi } from "./abi/gesture-series-market";
 import { describeTxError } from "./errors";
 
 function revertError(errorName: string): BaseError {
   const cause = new ContractFunctionRevertedError({
-    abi: gestureMarketAbi,
-    functionName: "betHigher",
+    abi: gestureSeriesMarketAbi,
+    functionName: "betYes",
     data: ("0x" +
       // 4-byte selector is irrelevant; construct via errorName instead.
       "") as `0x${string}`,
@@ -28,12 +28,19 @@ describe("describeTxError", () => {
   });
 
   it("maps every contract error name to a specific explanation", () => {
-    expect(describeTxError(revertError("TradingClosed"))).toMatch(/round has ended/i);
-    expect(describeTxError(revertError("NotResolvable"))).toMatch(/still live/i);
+    expect(describeTxError(revertError("RoundNotActive"))).toMatch(/no longer live/i);
+    expect(describeTxError(revertError("RoundNotInitialized"))).toMatch(/hasn't been opened/i);
+    expect(describeTxError(revertError("OutcomeDecided"))).toMatch(/crossed the threshold/i);
+    expect(describeTxError(revertError("NotResolvable"))).toMatch(/isn't known yet/i);
     expect(describeTxError(revertError("AlreadyResolved"))).toMatch(/already been resolved/i);
     expect(describeTxError(revertError("NotResolved"))).toMatch(/hasn't been resolved/i);
     expect(describeTxError(revertError("Slippage"))).toMatch(/slippage/i);
+    expect(describeTxError(revertError("DeadlineExpired"))).toMatch(/expired/i);
+    expect(describeTxError(revertError("InsufficientLiquidity"))).toMatch(/liquidity/i);
+    expect(describeTxError(revertError("InsufficientShares"))).toMatch(/shares|paired/i);
+    expect(describeTxError(revertError("InvalidFeeTier"))).toMatch(/fee tier/i);
     expect(describeTxError(revertError("TransferFailed"))).toMatch(/transfer failed/i);
+    expect(describeTxError(revertError("ReentrantCall"))).toMatch(/reentrancy/i);
   });
 
   it("falls back to the revert name for unknown custom errors", () => {
@@ -41,8 +48,8 @@ describe("describeTxError", () => {
   });
 
   it("detects error names embedded in plain messages", () => {
-    const err = new BaseError('The contract function "betHigher" reverted with: TradingClosed');
-    expect(describeTxError(err)).toMatch(/round has ended/i);
+    const err = new BaseError('The contract function "betYes" reverted with: OutcomeDecided');
+    expect(describeTxError(err)).toMatch(/crossed the threshold/i);
   });
 
   it("explains insufficient gas funds", () => {
@@ -52,9 +59,7 @@ describe("describeTxError", () => {
 
   it("handles plain Errors and non-errors", () => {
     expect(describeTxError(new Error("boom"))).toBe("boom");
-    expect(describeTxError(new Error("User rejected the request."))).toBe(
-      "Transaction cancelled in your wallet.",
-    );
+    expect(describeTxError(new Error("User rejected the request."))).toBe("Transaction cancelled in your wallet.");
     expect(describeTxError("weird")).toMatch(/something went wrong/i);
     expect(describeTxError(undefined)).toMatch(/something went wrong/i);
   });

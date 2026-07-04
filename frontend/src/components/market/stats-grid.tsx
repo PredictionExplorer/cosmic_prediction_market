@@ -1,13 +1,14 @@
 "use client";
 
-import { Activity, Coins, Droplets, Percent, Ruler, TrendingUp } from "lucide-react";
+import { Activity, Coins, Droplets, Layers, Target, TrendingUp } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatBps, formatCount, formatCst } from "@/lib/format";
-import type { MarketSnapshot } from "@/lib/market";
+import type { RoundSnapshot } from "@/lib/market";
+import { totalFeeReserve, totalLiquidity } from "@/lib/market";
 import { Card } from "@/components/ui/card";
 
 interface StatsGridProps {
-  snapshot: MarketSnapshot;
+  snapshot: RoundSnapshot;
   volume: bigint;
 }
 
@@ -19,48 +20,50 @@ interface Stat {
   readonly hint?: string;
 }
 
-/** The market's vital signs at a glance. */
+/** The round's vital signs at a glance. */
 export function StatsGrid({ snapshot, volume }: StatsGridProps) {
-  const liquidity = snapshot.reserveHigher + snapshot.reserveLower;
+  const fundedTiers = snapshot.pools.filter((p) => p.pool.totalShares > 0n);
   const stats: Stat[] = [
     {
       icon: <Activity className="size-4" aria-hidden />,
       label: "Gestures so far",
-      value: formatCount(snapshot.liveGestureCount),
+      value: formatCount(snapshot.currentCount),
       hint: "bids placed in this round to date",
     },
     {
-      icon: <Ruler className="size-4" aria-hidden />,
-      label: "Range",
-      value: `${formatCount(snapshot.minCount)}–${formatCount(snapshot.maxCount)}`,
-      hint: "payouts clamp outside this range",
+      icon: <Target className="size-4" aria-hidden />,
+      label: "To beat",
+      value: formatCount(snapshot.threshold),
+      hint: "the previous round's final count — YES needs strictly more",
     },
     {
       icon: <TrendingUp className="size-4" aria-hidden />,
       label: "Volume",
       value: formatCst(volume),
       unit: "CST",
-      hint: "total CST wagered through bets",
+      hint: "total CST wagered through bets this round",
     },
     {
       icon: <Droplets className="size-4" aria-hidden />,
       label: "Liquidity",
-      value: formatCst(liquidity),
-      unit: "CST",
-      hint: "outcome tokens in the trading pool",
+      value: formatCst(totalLiquidity(snapshot.pools)),
+      hint: "outcome tokens across all fee-tier pools",
     },
     {
-      icon: <Percent className="size-4" aria-hidden />,
-      label: "Trading fee",
-      value: formatBps(snapshot.feeBps),
-      hint: "charged per bet, paid to the market creator",
+      icon: <Layers className="size-4" aria-hidden />,
+      label: "Active tiers",
+      value:
+        fundedTiers.length === 0
+          ? "none"
+          : fundedTiers.map((p) => formatBps(BigInt(p.feeBps))).join(" · "),
+      hint: "fee tiers with liquidity — LPs choose their own fee",
     },
     {
       icon: <Coins className="size-4" aria-hidden />,
-      label: "Fees accrued",
-      value: formatCst(snapshot.feesAccrued),
+      label: "LP fees unclaimed",
+      value: formatCst(totalFeeReserve(snapshot.pools)),
       unit: "CST",
-      hint: "collected so far this round",
+      hint: "earned by liquidity providers, claimable anytime",
     },
   ];
 

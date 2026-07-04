@@ -2,17 +2,21 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { formatCst } from "@/lib/format";
-import { minTokensOutForSlippage, ONE, quoteBet } from "@/lib/math";
+import { bestTier, minTokensOutForSlippage, ONE, quoteBet, type TierPool } from "@/lib/math";
 import { BetPanel, type BetPanelProps } from "./bet-panel";
 
-const RANGE = { minCount: 200n, maxCount: 1_200n };
-const POOL = { reserveHigher: 10_000n * ONE, reserveLower: 10_000n * ONE };
+const LIQ = 10_000n * ONE;
+
+function tierPool(feeBps: number, reserveYes: bigint, reserveNo: bigint, totalShares = LIQ): TierPool {
+  return { feeBps, pool: { reserveYes, reserveNo, totalShares, accFeePerShare: 0n, feeReserve: 0n } };
+}
+
+/** Three funded tiers with identical reserves — the 1% tier quotes best. */
+const POOLS: TierPool[] = [tierPool(100, LIQ, LIQ), tierPool(200, LIQ, LIQ), tierPool(500, LIQ, LIQ)];
 
 function renderPanel(overrides: Partial<BetPanelProps> = {}) {
   const props: BetPanelProps = {
-    range: RANGE,
-    pool: POOL,
-    feeBps: 100n,
+    pools: POOLS,
     balance: 1_000n * ONE,
     allowance: 10_000_000n * ONE,
     pendingAction: null,
@@ -26,71 +30,72 @@ function renderPanel(overrides: Partial<BetPanelProps> = {}) {
 }
 
 describe("BetPanel", () => {
-  it("shows a live quote matching the contract math as the user types", async () => {
+  it("quotes with the shared math library and routes to the best tier", async () => {
     const user = userEvent.setup();
     renderPanel();
 
     await user.type(screen.getByTestId("amount-input"), "100");
 
-    // 100 CST into a balanced 10k/10k pool with 1% fee mints ~99 sets and
-    // swaps the LOWER half, for ~197 HIGHER total. Assert against the shared
-    // math library (itself validated against the Solidity suite).
-    const expected = quoteBet("higher", POOL, 100n * ONE, 100n);
-    expect(expected / ONE).toBe(197n);
+    // Identical pools: routing must pick the cheapest fee (1%).
+    const routed = bestTier("yes", POOLS, 100n * ONE);
+    expect(routed?.feeBps).toBe(100);
+    expect(screen.getByTestId("tier-auto-label")).toBeInTheDocument();
     const tokens = screen.getByTestId("quote-tokens");
-    expect(tokens.textContent).toContain(formatCst(expected));
-    expect(tokens.textContent).toContain("HIGHER");
-    // And the min-received respects the default 0.5% slippage setting.
-    const minOut = minTokensOutForSlippage(expected, 50);
-    expect(screen.getByText(/Min received/i).parentElement?.textContent).toContain(formatCst(minOut));
+    expect(tokens.textContent).toContain(formatCst(routed!.tokensOut));
+    expect(tokens.textContent).toContain("YES");
+    const minOut = minTokensOutForSlippage(routed!.tokensOut, 50);
+    expect(screen.getByTestId("quote-min-out").textContent).toContain(formatCst(minOut));
   });
 
-  it("switches sides and re-quotes", async () => {
+  it("re-routes to another tier when the cheap pool is skewed", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    // The 1% pool has terrible YES pricing (tiny YES reserve).
+    const pools = [tierPool(100, ONE, LIQ * 2n), tierPool(200, LIQ, LIQ), tierPool(500, LIQ, LIQ)];
+    renderPanel({ pools });
 
     await user.type(screen.getByTestId("amount-input"), "100");
-    await user.click(screen.getByTestId("tab-lower"));
 
-    expect(screen.getByTestId("tab-lower")).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("quote-tokens").textContent).toContain("LOWER");
+    const routed = bestTier("yes", pools, 100n * ONE);
+    expect(routed?.feeBps).toBe(200);
+    // The routed tier is marked "best" in the tier selector.
+    expect(screen.getByTestId("tier-200").textContent).toMatch(/best/i);
   });
 
-  it("submits a bet with the slippage-guarded minimum", async () => {
+  it("lets the user override the routed tier and submits with it", async () => {
     const user = userEvent.setup();
     const { props } = renderPanel();
 
     await user.type(screen.getByTestId("amount-input"), "50");
+    await user.click(screen.getByTestId("tier-500"));
     await user.click(screen.getByTestId("bet-submit"));
 
-    const expectedQuote = quoteBet("higher", POOL, 50n * ONE, 100n);
+    const expected = quoteBet("yes", POOLS[2].pool, 50n * ONE, 500n);
+    expect(props.onBet).toHaveBeenCalledWith("yes", 500, 50n * ONE, minTokensOutForSlippage(expected, 50));
+  });
+
+  it("switches sides and submits NO bets", async () => {
+    const user = userEvent.setup();
+    const { props } = renderPanel();
+
+    await user.click(screen.getByTestId("tab-no"));
+    await user.type(screen.getByTestId("amount-input"), "50");
+    await user.click(screen.getByTestId("bet-submit"));
+
+    expect(screen.getByTestId("tab-no")).toHaveAttribute("aria-selected", "true");
+    const routed = bestTier("no", POOLS, 50n * ONE);
     expect(props.onBet).toHaveBeenCalledWith(
-      "higher",
+      "no",
+      routed!.feeBps,
       50n * ONE,
-      minTokensOutForSlippage(expectedQuote, 50),
+      minTokensOutForSlippage(routed!.tokensOut, 50),
     );
   });
 
-  it("clears the input after a successful bet", async () => {
+  it("disables unfunded tiers", async () => {
     const user = userEvent.setup();
-    renderPanel();
-
-    const input = screen.getByTestId<HTMLInputElement>("amount-input");
-    await user.type(input, "50");
-    await user.click(screen.getByTestId("bet-submit"));
-
-    expect(input.value).toBe("");
-  });
-
-  it("keeps the input after a failed bet", async () => {
-    const user = userEvent.setup();
-    renderPanel({ onBet: vi.fn().mockResolvedValue(false) });
-
-    const input = screen.getByTestId<HTMLInputElement>("amount-input");
-    await user.type(input, "50");
-    await user.click(screen.getByTestId("bet-submit"));
-
-    expect(input.value).toBe("50");
+    renderPanel({ pools: [tierPool(100, LIQ, LIQ), tierPool(200, 0n, 0n, 0n), tierPool(500, LIQ, LIQ)] });
+    await user.type(screen.getByTestId("amount-input"), "10");
+    expect(screen.getByTestId("tier-200")).toBeDisabled();
   });
 
   it("routes through approval when allowance is too low", async () => {
@@ -98,75 +103,44 @@ describe("BetPanel", () => {
     const { props } = renderPanel({ allowance: 0n });
 
     await user.type(screen.getByTestId("amount-input"), "10");
-    const button = screen.getByTestId("bet-submit");
-    expect(button).toHaveTextContent(/approve cst/i);
+    expect(screen.getByTestId("bet-submit")).toHaveTextContent(/approve/i);
+    await user.click(screen.getByTestId("bet-submit"));
 
-    await user.click(button);
     expect(props.onApprove).toHaveBeenCalledWith(10n * ONE);
     expect(props.onBet).not.toHaveBeenCalled();
   });
 
-  it("blocks amounts above the balance", async () => {
+  it("blocks oversized bets and flags bad input", async () => {
     const user = userEvent.setup();
     const { props } = renderPanel({ balance: 5n * ONE });
 
     await user.type(screen.getByTestId("amount-input"), "10");
-    const button = screen.getByTestId("bet-submit");
-    expect(button).toBeDisabled();
-    expect(button).toHaveTextContent(/insufficient/i);
-
-    await user.click(button);
+    expect(screen.getByTestId("bet-submit")).toHaveTextContent(/insufficient/i);
+    await user.click(screen.getByTestId("bet-submit"));
     expect(props.onBet).not.toHaveBeenCalled();
+
+    await user.clear(screen.getByTestId("amount-input"));
+    await user.type(screen.getByTestId("amount-input"), "1.2.3");
+    expect(screen.getByTestId("input-error")).toBeInTheDocument();
   });
 
-  it("offers connect when no wallet is present", async () => {
+  it("prompts to connect when no wallet is present", async () => {
     const user = userEvent.setup();
     const { props } = renderPanel({ balance: null, allowance: null });
 
-    const button = screen.getByTestId("bet-submit");
-    expect(button).toHaveTextContent(/connect wallet/i);
-    await user.click(button);
+    expect(screen.getByTestId("bet-submit")).toHaveTextContent(/connect wallet/i);
+    await user.click(screen.getByTestId("bet-submit"));
     expect(props.onConnect).toHaveBeenCalled();
   });
 
-  it("surfaces input validation errors and disables submission", async () => {
+  it("clears the input only after a successful bet", async () => {
     const user = userEvent.setup();
-    const { props } = renderPanel();
+    const { props } = renderPanel({ onBet: vi.fn().mockResolvedValue(false) });
 
-    await user.type(screen.getByTestId("amount-input"), "0");
-    expect(screen.getByTestId("input-error")).toHaveTextContent(/more than 0/i);
-    expect(screen.getByTestId("bet-submit")).toBeDisabled();
-
+    const input = screen.getByTestId<HTMLInputElement>("amount-input");
+    await user.type(input, "50");
     await user.click(screen.getByTestId("bet-submit"));
-    expect(props.onBet).not.toHaveBeenCalled();
-  });
-
-  it("fills the exact full balance via MAX", async () => {
-    const user = userEvent.setup();
-    const { props } = renderPanel({ balance: 1_234n * ONE + 567n });
-
-    await user.click(screen.getByTestId("max-button"));
-    await user.click(screen.getByTestId("bet-submit"));
-
-    expect(props.onBet).toHaveBeenCalledWith("higher", 1_234n * ONE + 567n, expect.any(BigInt));
-  });
-
-  it("changes slippage via presets", async () => {
-    const user = userEvent.setup();
-    const { props } = renderPanel();
-
-    await user.click(screen.getByLabelText(/slippage settings/i));
-    await user.click(screen.getByRole("button", { name: "1%" }));
-    await user.type(screen.getByTestId("amount-input"), "100");
-    await user.click(screen.getByTestId("bet-submit"));
-
-    const expectedQuote = quoteBet("higher", POOL, 100n * ONE, 100n);
-    expect(props.onBet).toHaveBeenCalledWith("higher", 100n * ONE, minTokensOutForSlippage(expectedQuote, 100));
-  });
-
-  it("shows a spinner state while an action is pending", () => {
-    renderPanel({ pendingAction: "bet" });
-    expect(screen.getByTestId("bet-submit")).toBeDisabled();
-    expect(screen.getByTestId("bet-submit")).toHaveTextContent(/confirming/i);
+    expect(props.onBet).toHaveBeenCalled();
+    expect(input.value).toBe("50");
   });
 });

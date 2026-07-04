@@ -1,50 +1,56 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { MarketSnapshot, UserSnapshot } from "@/lib/market";
+import type { RoundSnapshot, UserSnapshot } from "@/lib/market";
 import { ONE } from "@/lib/math";
 import { PositionPanel, type PositionPanelProps } from "./position-panel";
 
-const LIVE: MarketSnapshot = {
-  address: "0x1111111111111111111111111111111111111111",
-  round: 3n,
-  minCount: 200n,
-  maxCount: 1_200n,
-  feeBps: 100n,
-  reserveHigher: 10_000n * ONE,
-  reserveLower: 10_000n * ONE,
-  resolved: false,
-  finalGestureCount: 0n,
-  payoutPerHigher: 0n,
-  creator: "0x2222222222222222222222222222222222222222",
-  cstAddress: "0x3333333333333333333333333333333333333333",
-  gameAddress: "0x4444444444444444444444444444444444444444",
-  feesAccrued: 0n,
-  gameRoundNum: 3n,
-  liveGestureCount: 700n,
-};
+const SERIES = "0x1111111111111111111111111111111111111111" as const;
 
-const RESOLVED: MarketSnapshot = {
-  ...LIVE,
-  resolved: true,
-  gameRoundNum: 4n,
-  finalGestureCount: 1_000n,
-  payoutPerHigher: (8n * ONE) / 10n,
-};
+function snapshot(overrides: Partial<RoundSnapshot> = {}): RoundSnapshot {
+  return {
+    seriesAddress: SERIES,
+    roundId: 5n,
+    initialized: true,
+    resolved: false,
+    yesWon: false,
+    threshold: 800n,
+    currentCount: 500n,
+    gameRoundNum: 5n,
+    pools: [
+      {
+        feeBps: 100,
+        pool: {
+          reserveYes: 1_000n * ONE,
+          reserveNo: 1_000n * ONE,
+          totalShares: 1_000n * ONE,
+          accFeePerShare: 0n,
+          feeReserve: 0n,
+        },
+      },
+    ],
+    cstAddress: "0x2222222222222222222222222222222222222222",
+    gameAddress: "0x3333333333333333333333333333333333333333",
+    ...overrides,
+  };
+}
 
-const USER: UserSnapshot = {
-  address: "0x5555555555555555555555555555555555555555",
-  higherBalance: 100n * ONE,
-  lowerBalance: 0n,
-  cstBalance: 50n * ONE,
-  cstAllowance: 0n,
-};
+function user(overrides: Partial<UserSnapshot> = {}): UserSnapshot {
+  return {
+    address: "0x4444444444444444444444444444444444444444",
+    yesBalance: 100n * ONE,
+    noBalance: 40n * ONE,
+    cstBalance: 1_000n * ONE,
+    cstAllowance: 0n,
+    lpPositions: [],
+    ...overrides,
+  };
+}
 
 function renderPanel(overrides: Partial<PositionPanelProps> = {}) {
   const props: PositionPanelProps = {
-    snapshot: LIVE,
-    user: USER,
-    breakEven: 850,
+    snapshot: snapshot(),
+    user: user(),
     pendingAction: null,
     onRedeemSets: vi.fn().mockResolvedValue(true),
     onClaim: vi.fn().mockResolvedValue(true),
@@ -56,80 +62,43 @@ function renderPanel(overrides: Partial<PositionPanelProps> = {}) {
 
 describe("PositionPanel", () => {
   it("renders nothing without a position", () => {
-    renderPanel({ user: { ...USER, higherBalance: 0n, lowerBalance: 0n } });
+    renderPanel({ user: user({ yesBalance: 0n, noBalance: 0n }) });
     expect(screen.queryByTestId("position-panel")).not.toBeInTheDocument();
   });
 
-  it("shows balances and the live-marked value", () => {
+  it("shows balances marked at the pool probability while live", () => {
     renderPanel();
-    expect(screen.getByTestId("higher-balance")).toHaveTextContent("100");
-    expect(screen.getByTestId("lower-balance")).toHaveTextContent("0");
-    // 100 HIGHER at live count 700 ⇒ f = 0.5 ⇒ 50 CST.
-    expect(screen.getByTestId("position-value")).toHaveTextContent("50");
+    expect(screen.getByTestId("yes-balance")).toHaveTextContent("100");
+    expect(screen.getByTestId("no-balance")).toHaveTextContent("40");
+    // 50% pool: value = 100*0.5 + 40*0.5 = 70.
+    expect(screen.getByTestId("position-value")).toHaveTextContent("70");
   });
 
-  it("what-if slider reprices the position at any hypothetical count", () => {
-    renderPanel();
-    const slider = screen.getByTestId("what-if-slider");
-
-    fireEvent.change(slider, { target: { value: "1200" } });
-    expect(screen.getByTestId("what-if-count")).toHaveTextContent("1,200");
-    expect(screen.getByTestId("what-if-value")).toHaveTextContent("100");
-
-    fireEvent.change(slider, { target: { value: "200" } });
-    expect(screen.getByTestId("what-if-value")).toHaveTextContent("0");
+  it("redeems complete sets while live", async () => {
+    const u = userEvent.setup();
+    const { props } = renderPanel();
+    await u.click(screen.getByTestId("redeem-button"));
+    expect(props.onRedeemSets).toHaveBeenCalledWith(40n * ONE); // min(yes, no)
   });
 
-  it("redeems complete sets when holding both sides", async () => {
-    const user = userEvent.setup();
-    const { props } = renderPanel({
-      user: { ...USER, higherBalance: 30n * ONE, lowerBalance: 12n * ONE },
-    });
-
-    expect(screen.getByText(/complete sets/i)).toBeInTheDocument();
-    await user.click(screen.getByTestId("redeem-button"));
-    expect(props.onRedeemSets).toHaveBeenCalledWith(12n * ONE);
+  it("explains a decided outcome and values YES at par", () => {
+    renderPanel({ snapshot: snapshot({ currentCount: 801n }) });
+    expect(screen.getByTestId("decided-note")).toBeInTheDocument();
+    expect(screen.getByTestId("position-value")).toHaveTextContent("100");
   });
 
-  it("hides the redeem row for one-sided positions", () => {
-    renderPanel();
+  it("claims the exact winning balance after resolution", async () => {
+    const u = userEvent.setup();
+    const { props } = renderPanel({ snapshot: snapshot({ resolved: true, yesWon: true }) });
+    const button = screen.getByTestId("claim-button");
+    expect(button).toHaveTextContent("100");
+    await u.click(button);
+    expect(props.onClaim).toHaveBeenCalled();
     expect(screen.queryByTestId("redeem-button")).not.toBeInTheDocument();
   });
 
-  it("claims at the fixed rate once resolved", async () => {
-    const user = userEvent.setup();
-    const { props } = renderPanel({ snapshot: RESOLVED });
-
-    // 100 HIGHER * 0.8 = 80 CST claimable; slider is gone.
-    const claim = screen.getByTestId("claim-button");
-    expect(claim).toHaveTextContent("80");
-    expect(screen.queryByTestId("what-if-slider")).not.toBeInTheDocument();
-
-    await user.click(claim);
-    expect(props.onClaim).toHaveBeenCalled();
-  });
-
-  it("shows a break-even hint for directional positions", () => {
-    renderPanel();
-    expect(screen.getByTestId("break-even")).toHaveTextContent(/above/i);
-    expect(screen.getByTestId("break-even")).toHaveTextContent("850");
-  });
-
-  it("clamps the displayed break-even into the market range", () => {
-    renderPanel({ breakEven: 99_999 });
-    expect(screen.getByTestId("break-even")).toHaveTextContent("1,200");
-  });
-
-  it("omits the break-even hint when unknown", () => {
-    renderPanel({ breakEven: null });
-    expect(screen.queryByTestId("break-even")).not.toBeInTheDocument();
-  });
-
-  it("no what-if or claim while pending action disables buttons", () => {
-    renderPanel({
-      snapshot: RESOLVED,
-      pendingAction: "claim",
-    });
-    expect(screen.getByTestId("claim-button")).toBeDisabled();
+  it("shows zero claimable when the user lost", () => {
+    renderPanel({ snapshot: snapshot({ resolved: true, yesWon: false }) });
+    expect(screen.getByTestId("claim-button")).toHaveTextContent("40");
   });
 });

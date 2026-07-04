@@ -1,133 +1,149 @@
 import type { Address } from "viem";
-import type { BetEvent } from "./history";
-import type { MarketRange, PoolState } from "./math";
-import { claimValue, entryCount, positionValueAt, predictedCountFloat } from "./math";
+import type { PoolState, TierPool } from "./math";
+import { aggregateProbabilityFloat, claimValue, positionValueAtProbability } from "./math";
 
 /**
- * Lifecycle of a market:
- *  - `live`      — the round is running; betting, minting and redeeming are open.
- *  - `ended`     — the round finished but nobody called `resolve()` yet.
- *  - `resolved`  — payouts are fixed; claiming is open.
+ * Lifecycle of one round's market:
+ *  - `uninitialized` — nobody has added liquidity for this round yet.
+ *  - `live`          — betting, liquidity and sets are open.
+ *  - `decided`       — the gesture count crossed the threshold mid-round:
+ *                      YES already won; betting/adds halted; resolve is open.
+ *  - `ended`         — the round finished but nobody called `resolve` yet.
+ *  - `resolved`      — the winner is fixed; claiming is open.
  */
-export type MarketPhase = "live" | "ended" | "resolved";
+export type RoundPhase = "uninitialized" | "live" | "decided" | "ended" | "resolved";
 
-/** Everything the UI needs about a market, fetched in one multicall. */
-export interface MarketSnapshot {
-  readonly address: Address;
-  readonly round: bigint;
-  readonly minCount: bigint;
-  readonly maxCount: bigint;
-  readonly feeBps: bigint;
-  readonly reserveHigher: bigint;
-  readonly reserveLower: bigint;
+/** Everything the UI needs about one round of the series, in one multicall. */
+export interface RoundSnapshot {
+  readonly seriesAddress: Address;
+  readonly roundId: bigint;
+  readonly initialized: boolean;
   readonly resolved: boolean;
-  readonly finalGestureCount: bigint;
-  readonly payoutPerHigher: bigint;
-  readonly creator: Address;
+  readonly yesWon: boolean;
+  /**
+   * The previous round's final gesture count — the number to beat. For
+   * uninitialized rounds this is read straight from the game (the value the
+   * market would freeze at initialization).
+   */
+  readonly threshold: bigint;
+  /** This round's gesture count so far (final once the round ends). */
+  readonly currentCount: bigint;
+  /** The game's current round counter. */
+  readonly gameRoundNum: bigint;
+  /** One pool per fee tier, ascending by fee. */
+  readonly pools: readonly TierPool[];
   readonly cstAddress: Address;
   readonly gameAddress: Address;
-  readonly feesAccrued: bigint;
-  /** The game's current round counter (`> round` ⇒ this market's round is over). */
-  readonly gameRoundNum: bigint;
-  /** Live gesture count of the market's round so far (final once the round ends). */
-  readonly liveGestureCount: bigint;
 }
 
-/** The connected user's stake in the market. */
+/** One LP position of the connected user. */
+export interface LpPosition {
+  readonly feeBps: number;
+  readonly shares: bigint;
+  readonly pendingFees: bigint;
+}
+
+/** The connected user's stake in one round. */
 export interface UserSnapshot {
   readonly address: Address;
-  readonly higherBalance: bigint;
-  readonly lowerBalance: bigint;
+  readonly yesBalance: bigint;
+  readonly noBalance: bigint;
   readonly cstBalance: bigint;
   readonly cstAllowance: bigint;
+  readonly lpPositions: readonly LpPosition[];
 }
 
-export function marketPhase(snapshot: Pick<MarketSnapshot, "resolved" | "gameRoundNum" | "round">): MarketPhase {
-  if (snapshot.resolved) return "resolved";
-  if (snapshot.gameRoundNum > snapshot.round) return "ended";
+export function roundPhase(
+  s: Pick<RoundSnapshot, "initialized" | "resolved" | "roundId" | "gameRoundNum" | "currentCount" | "threshold">,
+): RoundPhase {
+  if (s.resolved) return "resolved";
+  if (!s.initialized) return "uninitialized";
+  if (s.gameRoundNum > s.roundId) return "ended";
+  if (s.currentCount > s.threshold) return "decided";
   return "live";
 }
 
-export function marketRange(snapshot: Pick<MarketSnapshot, "minCount" | "maxCount">): MarketRange {
-  return { minCount: snapshot.minCount, maxCount: snapshot.maxCount };
-}
-
-export function poolState(snapshot: Pick<MarketSnapshot, "reserveHigher" | "reserveLower">): PoolState {
-  return { reserveHigher: snapshot.reserveHigher, reserveLower: snapshot.reserveLower };
+/** Whether betting is currently possible. */
+export function isTradable(s: RoundSnapshot): boolean {
+  return roundPhase(s) === "live";
 }
 
 /**
- * The number to show as "the market's prediction": live/ended markets read the
- * pool, resolved markets show the clamped final count.
+ * Whether `addLiquidity` would succeed: the round is live (or still
+ * uninitialized but open-able — current, with a previous round, and with the
+ * outcome still uncertain).
  */
-export function displayedPrediction(snapshot: MarketSnapshot): number {
-  const range = marketRange(snapshot);
-  if (marketPhase(snapshot) === "resolved") {
-    const clamped =
-      snapshot.finalGestureCount < snapshot.minCount
-        ? snapshot.minCount
-        : snapshot.finalGestureCount > snapshot.maxCount
-          ? snapshot.maxCount
-          : snapshot.finalGestureCount;
-    return Number(clamped);
-  }
-  return predictedCountFloat(range, poolState(snapshot));
-}
-
-/**
- * What the user's tokens are worth in CST:
- *  - resolved: exact claim value at the fixed payout rate;
- *  - live/ended: value if the round ended at the current live gesture count.
- */
-export function positionValue(market: MarketSnapshot, user: UserSnapshot): bigint {
-  if (market.resolved) {
-    return claimValue(user.higherBalance, user.lowerBalance, market.payoutPerHigher);
-  }
-  return positionValueAt(
-    marketRange(market),
-    user.higherBalance,
-    user.lowerBalance,
-    market.liveGestureCount,
+export function canAddLiquidity(s: RoundSnapshot): boolean {
+  const phase = roundPhase(s);
+  if (phase === "live") return true;
+  return (
+    phase === "uninitialized" &&
+    s.roundId >= 1n &&
+    s.gameRoundNum === s.roundId &&
+    s.currentCount <= s.threshold
   );
 }
 
-export function hasPosition(user: Pick<UserSnapshot, "higherBalance" | "lowerBalance">): boolean {
-  return user.higherBalance > 0n || user.lowerBalance > 0n;
+/** Whether `resolve()` would succeed right now. */
+export function isResolvable(s: RoundSnapshot): boolean {
+  const phase = roundPhase(s);
+  return phase === "ended" || phase === "decided";
 }
 
-export interface UserEntries {
-  /** Average entry count of the user's HIGHER bets (null if none). */
-  readonly higher: number | null;
-  /** Average entry count of the user's LOWER bets (null if none). */
-  readonly lower: number | null;
-  /** Total CST the user has wagered through bets. */
-  readonly totalWagered: bigint;
+/** Total outcome tokens across all tier pools (a liquidity gauge). */
+export function totalLiquidity(pools: readonly TierPool[]): bigint {
+  return pools.reduce((acc, { pool }) => acc + pool.reserveYes + pool.reserveNo, 0n);
+}
+
+/** Total unclaimed LP fee escrow across pools. */
+export function totalFeeReserve(pools: readonly TierPool[]): bigint {
+  return pools.reduce((acc, { pool }) => acc + pool.feeReserve, 0n);
 }
 
 /**
- * Aggregates a user's Bet events into average entry counts per side: the
- * gesture count at which the combined bet exactly breaks even. This is the
- * honest "your entry" number for positions built from multiple bets.
+ * The headline probability the UI shows for YES ("this round beats the last
+ * one"), in [0,1]:
+ *  - resolved: exactly 0 or 1;
+ *  - decided: 1 (the count already crossed);
+ *  - otherwise: the liquidity-weighted pool-implied probability, or null when
+ *    no pool has liquidity yet.
  */
-export function userEntries(range: MarketRange, bets: readonly BetEvent[], user: Address): UserEntries {
-  let higherIn = 0n;
-  let higherOut = 0n;
-  let lowerIn = 0n;
-  let lowerOut = 0n;
-  const target = user.toLowerCase();
-  for (const bet of bets) {
-    if (bet.user.toLowerCase() !== target) continue;
-    if (bet.side === "higher") {
-      higherIn += bet.cstIn;
-      higherOut += bet.tokensOut;
-    } else {
-      lowerIn += bet.cstIn;
-      lowerOut += bet.tokensOut;
-    }
-  }
-  return {
-    higher: higherOut > 0n ? entryCount(range, "higher", higherIn, higherOut) : null,
-    lower: lowerOut > 0n ? entryCount(range, "lower", lowerIn, lowerOut) : null,
-    totalWagered: higherIn + lowerIn,
-  };
+export function displayedProbability(s: RoundSnapshot): number | null {
+  const phase = roundPhase(s);
+  if (phase === "resolved") return s.yesWon ? 1 : 0;
+  if (phase === "decided") return 1;
+  return aggregateProbabilityFloat(s.pools);
+}
+
+/**
+ * What the user's outcome tokens are worth in CST:
+ *  - resolved: the exact claim value;
+ *  - decided: YES is certain (its tokens are worth 1, NO worth 0);
+ *  - live/ended: marked at the displayed probability (float, display-only).
+ */
+export function positionValueFloat(s: RoundSnapshot, user: Pick<UserSnapshot, "yesBalance" | "noBalance">): number {
+  const phase = roundPhase(s);
+  if (phase === "resolved") return Number(claimValue(user.yesBalance, user.noBalance, s.yesWon)) / 1e18;
+  if (phase === "decided") return Number(user.yesBalance) / 1e18;
+  const p = displayedProbability(s);
+  return positionValueAtProbability(user.yesBalance, user.noBalance, p ?? 0.5);
+}
+
+export function hasPosition(user: Pick<UserSnapshot, "yesBalance" | "noBalance">): boolean {
+  return user.yesBalance > 0n || user.noBalance > 0n;
+}
+
+export function hasLpPosition(user: Pick<UserSnapshot, "lpPositions">): boolean {
+  return user.lpPositions.some((p) => p.shares > 0n || p.pendingFees > 0n);
+}
+
+/** The pool for a tier, if it exists in the snapshot. */
+export function poolForTier(pools: readonly TierPool[], feeBps: number): PoolState | null {
+  return pools.find((p) => p.feeBps === feeBps)?.pool ?? null;
+}
+
+/** How far the current count is toward the threshold, in [0,1] (can exceed). */
+export function thresholdProgress(s: Pick<RoundSnapshot, "currentCount" | "threshold">): number {
+  if (s.threshold === 0n) return s.currentCount > 0n ? 1 : 0;
+  return Number(s.currentCount) / Number(s.threshold);
 }
