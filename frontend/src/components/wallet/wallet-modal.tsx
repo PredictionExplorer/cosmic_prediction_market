@@ -2,10 +2,12 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Wallet, X } from "lucide-react";
 import type { Connector } from "wagmi";
 import { useConnect, useConnectors } from "wagmi";
+import { useMounted } from "@/hooks/use-mounted";
 import { describeTxError } from "@/lib/errors";
 
 interface WalletModalProps {
@@ -19,6 +21,7 @@ interface WalletModalProps {
  * WalletConnect when configured.
  */
 export function WalletModal({ open, onClose }: WalletModalProps) {
+  const mounted = useMounted();
   const connectors = useConnectors();
   const connect = useConnect();
 
@@ -38,7 +41,12 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
     }
   };
 
-  return (
+  if (!mounted) return null;
+
+  // Portaled to <body>: ancestors with backdrop-filter (e.g. the sticky
+  // header) become containing blocks for position:fixed, which would trap
+  // the overlay inside them instead of covering the viewport.
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -123,6 +131,7 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

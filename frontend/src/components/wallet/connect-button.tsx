@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, LogOut, TriangleAlert, Wallet } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChainId, useConnection, useDisconnect, useSwitchChain } from "wagmi";
 import { useMounted } from "@/hooks/use-mounted";
 import { appConfig } from "@/lib/config";
@@ -21,6 +21,21 @@ export function ConnectButton() {
   const disconnect = useDisconnect();
   const [modalOpen, setModalOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close the account menu on any outside click. A fixed-position scrim
+  // doesn't work here: the header's backdrop-filter makes it a containing
+  // block, so the scrim would only cover the header strip.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, [menuOpen]);
 
   if (!mounted) {
     return (
@@ -57,28 +72,25 @@ export function ConnectButton() {
   }
 
   return (
-    <div className="relative">
+    <div className="relative" ref={menuRef}>
       <Button variant="outline" onClick={() => setMenuOpen((v) => !v)} aria-expanded={menuOpen}>
         <span className="size-2 rounded-full bg-higher shadow-glow-higher" aria-hidden />
         <span className="font-mono text-xs">{shortAddress(connection.address ?? "")}</span>
         <ChevronDown className="size-3.5 text-ink-dim" aria-hidden />
       </Button>
       {menuOpen && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} aria-hidden />
-          <div className="absolute right-0 z-40 mt-2 w-44 overflow-hidden rounded-xl border border-line bg-surface shadow-[0_16px_48px_rgba(2,0,16,0.7)]">
-            <button
-              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-ink-dim transition-colors hover:bg-surface-2 hover:text-ink"
-              onClick={() => {
-                disconnect.mutate({});
-                setMenuOpen(false);
-              }}
-            >
-              <LogOut className="size-4" aria-hidden />
-              Disconnect
-            </button>
-          </div>
-        </>
+        <div className="absolute right-0 z-40 mt-2 w-44 overflow-hidden rounded-xl border border-line bg-surface shadow-[0_16px_48px_rgba(2,0,16,0.7)]">
+          <button
+            className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-ink-dim transition-colors hover:bg-surface-2 hover:text-ink"
+            onClick={() => {
+              disconnect.mutate({});
+              setMenuOpen(false);
+            }}
+          >
+            <LogOut className="size-4" aria-hidden />
+            Disconnect
+          </button>
+        </div>
       )}
     </div>
   );
