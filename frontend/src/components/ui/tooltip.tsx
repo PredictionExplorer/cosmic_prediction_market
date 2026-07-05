@@ -4,37 +4,75 @@ import { CircleQuestionMark } from "lucide-react";
 import {
   cloneElement,
   isValidElement,
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type HTMLAttributes,
   type ReactElement,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 type Side = "top" | "bottom";
 type Align = "center" | "start" | "end";
 
-const SIDE_CLASSES: Record<Side, string> = {
-  top: "bottom-full mb-1.5",
-  bottom: "top-full mt-1.5",
-};
-
-const ALIGN_CLASSES: Record<Align, string> = {
-  center: "left-1/2 -translate-x-1/2",
-  start: "left-0",
-  end: "right-0",
-};
+/** Gap between the trigger and the bubble, px. */
+const GAP = 6;
+/** Minimum distance the bubble keeps from the viewport edges, px. */
+const PAD = 8;
 
 /** `useLayoutEffect` warns during SSR; the measurement only matters on the client. */
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
+interface BubblePosition {
+  readonly top: number;
+  readonly left: number;
+}
+
+/**
+ * Pure placement math: where the bubble's top-left corner goes, in viewport
+ * coordinates. Clamps horizontally so the bubble never bleeds off-screen and
+ * flips to the other side when the preferred side has no room. Exported for
+ * direct geometry testing.
+ */
+export function computeBubblePosition(args: {
+  trigger: Pick<DOMRect, "top" | "bottom" | "left" | "right" | "width">;
+  bubbleWidth: number;
+  bubbleHeight: number;
+  side: Side;
+  align: Align;
+  viewportWidth: number;
+  viewportHeight: number;
+}): BubblePosition {
+  const { trigger, bubbleWidth, bubbleHeight, side, align, viewportWidth, viewportHeight } = args;
+
+  const anchorX = align === "center" ? trigger.left + trigger.width / 2 : align === "start" ? trigger.left : trigger.right;
+  const desiredLeft = align === "center" ? anchorX - bubbleWidth / 2 : align === "start" ? anchorX : anchorX - bubbleWidth;
+  const maxLeft = Math.max(PAD, viewportWidth - PAD - bubbleWidth);
+  const left = Math.min(Math.max(desiredLeft, PAD), maxLeft);
+
+  // A side "fits" when the bubble would be fully visible there. Triggers can
+  // themselves sit partially outside the viewport (mid-scroll), so both edges
+  // of the candidate position matter, not just the far one.
+  const aboveTop = trigger.top - GAP - bubbleHeight;
+  const belowTop = trigger.bottom + GAP;
+  const visibleAt = (top: number) => top >= 0 && top + bubbleHeight <= viewportHeight;
+  const fitsAbove = visibleAt(aboveTop);
+  const fitsBelow = visibleAt(belowTop);
+  // Honor the requested side; flip only when it doesn't fit and the other does.
+  const placeAbove = side === "top" ? fitsAbove || !fitsBelow : !fitsBelow && fitsAbove;
+
+  return { top: placeAbove ? aboveTop : belowTop, left };
+}
+
 export type TooltipProps = Omit<HTMLAttributes<HTMLSpanElement>, "content"> & {
   /** The explanation shown in the bubble. */
   content: ReactNode;
-  /** Which side of the trigger the bubble opens on. */
+  /** Which side of the trigger the bubble opens on (flips when out of room). */
   side?: Side;
   /** How the bubble aligns to the trigger along the horizontal axis. */
   align?: Align;
@@ -50,9 +88,14 @@ export type TooltipProps = Omit<HTMLAttributes<HTMLSpanElement>, "content"> & {
 /**
  * A dependency-free tooltip in the app's cosmic style. Opens on hover and
  * keyboard focus, on tap on touch devices; closes on Escape, blur, unhover,
- * or an outside tap. The bubble is positioned absolutely inside the trigger
- * wrapper — NOT `position: fixed`, which breaks inside the app's
- * backdrop-blurred cards (they become containing blocks).
+ * or an outside tap.
+ *
+ * The bubble renders in a portal on `document.body` with `position: fixed`.
+ * It must escape the trigger's DOM subtree: the app's cards use
+ * `backdrop-blur`, which makes each card a stacking context, so an in-card
+ * bubble paints BELOW any later-DOM card and the sticky header no matter its
+ * z-index. At body level the bubble competes in the root stacking context and
+ * `z-[60]` puts it above everything (header z-20, menus z-40, modal z-50).
  */
 export function Tooltip({
   content,
@@ -65,10 +108,47 @@ export function Tooltip({
 }: TooltipProps) {
   const id = useId();
   const [open, setOpen] = useState(false);
-  /** Horizontal nudge (px) applied after measuring, so the bubble never bleeds off-screen. */
-  const [shift, setShift] = useState(0);
+  /** Null until the bubble has been measured; it stays invisible that frame. */
+  const [pos, setPos] = useState<BubblePosition | null>(null);
   const rootRef = useRef<HTMLSpanElement>(null);
   const bubbleRef = useRef<HTMLSpanElement>(null);
+
+  const updatePosition = useCallback(() => {
+    const trigger = rootRef.current;
+    const bubble = bubbleRef.current;
+    if (!trigger || !bubble) return;
+    const next = computeBubblePosition({
+      trigger: trigger.getBoundingClientRect(),
+      bubbleWidth: bubble.offsetWidth,
+      bubbleHeight: bubble.offsetHeight,
+      side,
+      align,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    setPos((prev) => (prev && prev.top === next.top && prev.left === next.left ? prev : next));
+  }, [side, align]);
+
+  // Measure and place before paint, so the bubble never flashes unpositioned.
+  useIsomorphicLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    updatePosition();
+  }, [open, updatePosition]);
+
+  // Stay glued to the trigger while anything scrolls or the window resizes.
+  useEffect(() => {
+    if (!open) return;
+    const handler = () => updatePosition();
+    window.addEventListener("scroll", handler, { capture: true, passive: true });
+    window.addEventListener("resize", handler);
+    return () => {
+      window.removeEventListener("scroll", handler, { capture: true });
+      window.removeEventListener("resize", handler);
+    };
+  }, [open, updatePosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,24 +166,14 @@ export function Tooltip({
     };
   }, [open]);
 
-  useIsomorphicLayoutEffect(() => {
-    if (!open) {
-      setShift(0);
-      return;
-    }
-    const rect = bubbleRef.current?.getBoundingClientRect();
-    if (!rect || rect.width === 0) return; // jsdom and pre-paint renders
-    const pad = 8;
-    if (rect.left < pad) setShift(pad - rect.left);
-    else if (rect.right > window.innerWidth - pad) setShift(window.innerWidth - pad - rect.right);
-  }, [open]);
-
   const describedBy = open ? id : undefined;
   // When the child is the focusable trigger, the description belongs on it.
   const child =
     tabIndex < 0 && isValidElement(children)
       ? cloneElement(children as ReactElement<HTMLAttributes<HTMLElement>>, { "aria-describedby": describedBy })
       : children;
+
+  const bubbleStyle: CSSProperties = pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" };
 
   return (
     <span
@@ -121,24 +191,24 @@ export function Tooltip({
       onClick={() => setOpen(true)}
     >
       {child}
-      {open && (
-        <span
-          ref={bubbleRef}
-          role="tooltip"
-          id={id}
-          style={shift !== 0 ? { marginLeft: shift } : undefined}
-          className={[
-            "pointer-events-none absolute z-40 w-max max-w-64",
-            "rounded-xl border border-line-strong bg-surface-2 px-3 py-2",
-            "text-left font-sans text-[11px] font-normal normal-case leading-relaxed tracking-normal whitespace-normal text-ink-dim",
-            "shadow-[0_12px_32px_rgba(2,0,16,0.7)]",
-            SIDE_CLASSES[side],
-            ALIGN_CLASSES[align],
-          ].join(" ")}
-        >
-          {content}
-        </span>
-      )}
+      {open &&
+        createPortal(
+          <span
+            ref={bubbleRef}
+            role="tooltip"
+            id={id}
+            style={bubbleStyle}
+            className={[
+              "pointer-events-none fixed z-[60] w-max max-w-64",
+              "rounded-xl border border-line-strong bg-surface-2 px-3 py-2",
+              "text-left font-sans text-[11px] font-normal normal-case leading-relaxed tracking-normal whitespace-normal text-ink-dim",
+              "shadow-[0_12px_32px_rgba(2,0,16,0.7)]",
+            ].join(" ")}
+          >
+            {content}
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }
