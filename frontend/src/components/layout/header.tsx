@@ -4,6 +4,7 @@ import { Orbit } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip } from "@/components/ui/tooltip";
 import { ConnectButton } from "@/components/wallet/connect-button";
 
 const NAV_LINKS = [
@@ -27,9 +28,15 @@ export function Header() {
                 Gesture<span className="text-nova-bright">Market</span>
               </span>
             </Link>
-            <Badge tone="nova" pulse data-testid="beta-badge">
-              Beta
-            </Badge>
+            <Tooltip
+              side="bottom"
+              align="start"
+              content="Early software on a live chain: the contract is immutable and tested, but young. Size your bets accordingly."
+            >
+              <Badge tone="nova" pulse className="cursor-help" data-testid="beta-badge">
+                Beta
+              </Badge>
+            </Tooltip>
           </div>
           <nav aria-label="Primary" className="flex items-center gap-1">
             {NAV_LINKS.map((link) => {

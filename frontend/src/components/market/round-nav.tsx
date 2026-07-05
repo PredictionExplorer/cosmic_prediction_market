@@ -3,6 +3,7 @@
 import { ChevronLeft, ChevronRight, Radio, Telescope } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
+import { Tooltip } from "@/components/ui/tooltip";
 
 interface RoundNavProps {
   roundId: bigint;
@@ -51,23 +52,30 @@ export function RoundNav({ roundId, currentRound }: RoundNavProps) {
           Round {roundId.toString()}
         </span>
         {isFuture && (
-          <span
-            data-testid="round-future"
-            className="flex items-center gap-1 rounded-full border border-nova/40 bg-nova/10 px-2.5 py-0.5 text-[11px] font-semibold text-nova-bright"
+          <Tooltip
+            side="bottom"
+            content="The game hasn't reached this round yet. Its threshold is still unknown, but the market is already open — positions taken now are early bets."
           >
-            <Telescope className="size-3" aria-hidden />
-            Future
-          </span>
+            <span
+              data-testid="round-future"
+              className="flex cursor-help items-center gap-1 rounded-full border border-nova/40 bg-nova/10 px-2.5 py-0.5 text-[11px] font-semibold text-nova-bright"
+            >
+              <Telescope className="size-3" aria-hidden />
+              Future
+            </span>
+          </Tooltip>
         )}
         {!onLive && (
-          <button
-            onClick={() => navigate(null)}
-            data-testid="round-live"
-            className="flex items-center gap-1 rounded-full border border-higher/40 bg-higher/10 px-2.5 py-0.5 text-[11px] font-semibold text-higher transition-colors hover:bg-higher/20"
-          >
-            <Radio className="size-3" aria-hidden />
-            Jump to live
-          </button>
+          <Tooltip side="bottom" content="Back to the round the game is playing right now." tabIndex={-1}>
+            <button
+              onClick={() => navigate(null)}
+              data-testid="round-live"
+              className="flex items-center gap-1 rounded-full border border-higher/40 bg-higher/10 px-2.5 py-0.5 text-[11px] font-semibold text-higher transition-colors hover:bg-higher/20"
+            >
+              <Radio className="size-3" aria-hidden />
+              Jump to live
+            </button>
+          </Tooltip>
         )}
       </div>
 

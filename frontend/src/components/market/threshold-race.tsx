@@ -2,6 +2,7 @@
 
 import { motion, useReducedMotion } from "motion/react";
 import { formatCount } from "@/lib/format";
+import { Tooltip } from "@/components/ui/tooltip";
 
 export interface ThresholdRaceProps {
   /** Gestures placed so far this round. */
@@ -52,13 +53,20 @@ export function ThresholdRace({
           {prevRoundId !== null ? ` when round ${prevRoundId.toString()} ends` : " when the previous round ends"}
         </div>
         <div className="mt-1 flex items-baseline justify-between font-mono text-xs text-ink-faint">
-          <span data-testid="race-current">
-            {formatCount(currentCount)} <span className="text-[10px] uppercase">so far</span>
-          </span>
+          <Tooltip content="Gestures (bids) placed in this round so far. The count only ever goes up." align="start">
+            <span data-testid="race-current" className="cursor-help">
+              {formatCount(currentCount)} <span className="text-[10px] uppercase">so far</span>
+            </span>
+          </Tooltip>
           <span className="text-[10px] uppercase tracking-widest text-ink-faint/80">threshold pending</span>
-          <span data-testid="race-target" className="text-ended">
-            beat ?
-          </span>
+          <Tooltip
+            content="The number to beat is unknown until the previous round finishes — it locks at that round's final gesture count."
+            align="end"
+          >
+            <span data-testid="race-target" className="cursor-help text-ended">
+              beat ?
+            </span>
+          </Tooltip>
         </div>
       </div>
     );
@@ -86,7 +94,6 @@ export function ThresholdRace({
           data-testid="race-threshold"
           className="absolute top-1/2 h-7 w-1 -translate-x-1/2 -translate-y-1/2 rounded bg-ended shadow-[0_0_12px_rgba(255,195,85,0.7)]"
           style={{ left: `${thresholdPct}%` }}
-          title={`Threshold to beat: ${formatCount(threshold)}`}
         />
         {/* Runner marker */}
         <motion.div
@@ -109,15 +116,22 @@ export function ThresholdRace({
       </div>
 
       <div className="mt-1 flex items-baseline justify-between font-mono text-xs text-ink-faint">
-        <span data-testid="race-current">
-          {formatCount(currentCount)} <span className="text-[10px] uppercase">so far</span>
-        </span>
+        <Tooltip content="Gestures (bids) placed in this round so far. The count only ever goes up." align="start">
+          <span data-testid="race-current" className="cursor-help">
+            {formatCount(currentCount)} <span className="text-[10px] uppercase">so far</span>
+          </span>
+        </Tooltip>
         <span className="text-[10px] uppercase tracking-widest text-ink-faint/80">
           {crossed ? "threshold crossed — YES wins" : "gestures vs last round"}
         </span>
-        <span data-testid="race-target" className="text-ended">
-          beat {formatCount(threshold)}
-        </span>
+        <Tooltip
+          content={`The finish line: last round ended at ${formatCount(threshold)} gestures. Strictly more than that and YES wins — a tie or less means NO wins.`}
+          align="end"
+        >
+          <span data-testid="race-target" className="cursor-help text-ended">
+            beat {formatCount(threshold)}
+          </span>
+        </Tooltip>
       </div>
     </div>
   );

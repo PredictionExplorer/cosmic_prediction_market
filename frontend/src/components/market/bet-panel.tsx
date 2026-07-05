@@ -16,6 +16,7 @@ import {
 } from "@/lib/math";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InfoTip } from "@/components/ui/tooltip";
 
 export interface BetPanelProps {
   pool: PoolState;
@@ -104,7 +105,13 @@ export function BetPanel({ pool, balance, allowance, pendingAction, onConnect, o
           className="mt-3 flex items-center justify-between rounded-xl border border-line bg-surface-2/50 px-3 py-2"
           data-testid="slippage-settings"
         >
-          <span className="text-xs text-ink-dim">Max slippage</span>
+          <span className="flex items-center gap-1 text-xs text-ink-dim">
+            Max slippage
+            <InfoTip
+              label="About max slippage"
+              content="How much worse than the quote you're willing to accept before your bet reverts instead of filling. Tighter is safer but fails more often when the market moves fast."
+            />
+          </span>
           <div className="flex gap-1">
             {SLIPPAGE_PRESETS_BPS.map((bps) => (
               <button
@@ -198,31 +205,61 @@ export function BetPanel({ pool, balance, allowance, pendingAction, onConnect, o
       {quote !== null && !parsed.error && (
         <dl className="mt-4 space-y-2 rounded-xl border border-line bg-surface-2/40 p-3 text-xs" data-testid="quote-box">
           <div className="flex justify-between">
-            <dt className="text-ink-faint">You receive</dt>
+            <dt className="flex items-center gap-1 text-ink-faint">
+              You receive
+              <InfoTip
+                label="About the tokens you receive"
+                content={`Outcome tokens bought from the pool after the fee. Each ${side.toUpperCase()} token pays exactly 1 CST if ${side.toUpperCase()} wins — so more tokens per CST means better odds for you.`}
+              />
+            </dt>
             <dd className={`font-mono font-semibold ${sideColor}`} data-testid="quote-tokens">
               {formatCst(quote.tokensOut)} {side.toUpperCase()}
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-ink-faint">Payout if {side.toUpperCase()} wins</dt>
+            <dt className="flex items-center gap-1 text-ink-faint">
+              Payout if {side.toUpperCase()} wins
+              <InfoTip
+                label="About the payout"
+                content="What you can claim at resolution if you're right: 1 CST per token. If you're wrong, your tokens pay nothing."
+              />
+            </dt>
             <dd className="font-mono text-ink" data-testid="quote-payout">
               {formatCst(quote.tokensOut)} CST
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-ink-faint">Your entry (implied chance)</dt>
+            <dt className="flex items-center gap-1 text-ink-faint">
+              Your entry (implied chance)
+              <InfoTip
+                label="About your entry price"
+                content={`The probability you're effectively paying for: CST in ÷ tokens out. Your bet is profitable if ${side.toUpperCase()}'s real chance is better than this. Big bets push the price against you, so this is worse than the headline market odds.`}
+              />
+            </dt>
             <dd className="font-mono text-ink" data-testid="quote-entry">
               {quote.entry === null ? "—" : `${(quote.entry * 100).toLocaleString("en-US", { maximumFractionDigits: 1 })}%`}
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-ink-faint">Fee ({formatBps(feeBps)}, LP-voted)</dt>
+            <dt className="flex items-center gap-1 text-ink-faint">
+              Fee ({formatBps(feeBps)}, LP-voted)
+              <InfoTip
+                label="About the fee"
+                content="Taken off the top of your bet and escrowed for the pool's liquidity providers. The rate is the share-weighted average of all LP fee votes, so it can drift as LPs re-vote."
+              />
+            </dt>
             <dd className="font-mono text-ink-dim" data-testid="quote-fee">
               {formatCst(quote.fee)} CST
             </dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-ink-faint">Min received (slippage {(slippageBps / 100).toLocaleString("en-US")}%)</dt>
+            <dt className="flex items-center gap-1 text-ink-faint">
+              Min received (slippage {(slippageBps / 100).toLocaleString("en-US")}%)
+              <InfoTip
+                label="About the minimum received"
+                content="Your protection floor. If other transactions land first and the pool would give you fewer tokens than this, your bet reverts instead of filling badly."
+              />
+            </dt>
             <dd className="font-mono text-ink-dim" data-testid="quote-min-out">
               {formatCst(quote.minOut)}
             </dd>

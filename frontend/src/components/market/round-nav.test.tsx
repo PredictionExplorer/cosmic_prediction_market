@@ -62,4 +62,18 @@ describe("RoundNav", () => {
     expect(screen.getByTestId("round-next")).toBeDisabled();
     expect(screen.queryByTestId("round-future")).not.toBeInTheDocument();
   });
+
+  it("explains future rounds and the live shortcut on hover", async () => {
+    const user = userEvent.setup();
+    render(<RoundNav roundId={9n} currentRound={7n} />);
+
+    await user.hover(screen.getByTestId("round-future"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/positions taken now are early bets/i);
+    await user.unhover(screen.getByTestId("round-future"));
+
+    await user.hover(screen.getByTestId("round-live"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/playing right now/i);
+    // Hovering the shortcut must not navigate.
+    expect(push).not.toHaveBeenCalled();
+  });
 });

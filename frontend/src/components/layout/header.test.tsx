@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Header } from "./header";
 
@@ -20,6 +21,14 @@ describe("Header", () => {
   it("shows a prominent beta badge", () => {
     render(<Header />);
     expect(screen.getByTestId("beta-badge")).toHaveTextContent(/beta/i);
+  });
+
+  it("explains what beta means on hover", async () => {
+    const user = userEvent.setup();
+    render(<Header />);
+
+    await user.hover(screen.getByTestId("beta-badge"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/size your bets accordingly/i);
   });
 
   it("links the brand home and navigates to Market and FAQ", () => {

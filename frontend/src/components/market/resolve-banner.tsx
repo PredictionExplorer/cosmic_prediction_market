@@ -6,6 +6,7 @@ import type { RoundSnapshot } from "@/lib/market";
 import { roundPhase } from "@/lib/market";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InfoTip } from "@/components/ui/tooltip";
 
 interface ResolveBannerProps {
   snapshot: RoundSnapshot;
@@ -49,6 +50,11 @@ export function ResolveBanner({ snapshot, pending, connected, onResolve, onConne
               </>
             )}{" "}
             Anyone can resolve — one transaction, no special permissions.
+            <InfoTip
+              label="About resolving"
+              className="ml-1 align-text-bottom"
+              content="Resolving just writes the final outcome on-chain so winners can claim. It's permissionless by design: no admin, no oracle committee — the contract reads the gesture count straight from the game."
+            />
           </p>
         </div>
         <Button

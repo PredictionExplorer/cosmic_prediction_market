@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { RoundSnapshot } from "@/lib/market";
 import { ONE } from "@/lib/math";
@@ -105,5 +106,49 @@ describe("MarketHero", () => {
     );
     expect(screen.getByTestId("hero-threshold-unknown")).toHaveTextContent(/locks when round 8 ends/i);
     expect(screen.queryByTestId("hero-threshold")).not.toBeInTheDocument();
+  });
+});
+
+describe("MarketHero — tooltips", () => {
+  it("explains the live phase on the badge", async () => {
+    const user = userEvent.setup();
+    render(<MarketHero snapshot={snapshot()} history={[]} />);
+
+    await user.hover(screen.getByTestId("phase-badge"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/market is open/i);
+  });
+
+  it("explains why a decided round halts betting", async () => {
+    const user = userEvent.setup();
+    render(<MarketHero snapshot={snapshot({ currentCount: 801n })} history={[]} />);
+
+    await user.hover(screen.getByTestId("phase-badge"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/YES is certain/i);
+  });
+
+  it("explains the strict-beat rule on the threshold line", async () => {
+    const user = userEvent.setup();
+    render(<MarketHero snapshot={snapshot()} history={[]} />);
+
+    await user.hover(screen.getByRole("button", { name: "About the threshold" }));
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent(/strictly higher/i);
+    expect(tip).toHaveTextContent(/a tie means NO wins/i);
+  });
+
+  it("explains how the probability is derived from the pool", async () => {
+    const user = userEvent.setup();
+    render(<MarketHero snapshot={snapshot()} history={[]} />);
+
+    await user.hover(screen.getByRole("button", { name: "About this probability" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/NO reserve ÷ \(YES reserve \+ NO reserve\)/i);
+  });
+
+  it("explains which game round the market tracks", async () => {
+    const user = userEvent.setup();
+    render(<MarketHero snapshot={snapshot()} history={[]} />);
+
+    await user.hover(screen.getByText("Round 5"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/tracks one Cosmic Signature round/i);
   });
 });

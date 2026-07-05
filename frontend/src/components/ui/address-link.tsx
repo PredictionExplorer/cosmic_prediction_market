@@ -14,15 +14,24 @@ export function AddressLink({ address, kind = "address", label, className = "" }
   const explorer = appConfig.chain.blockExplorers?.default?.url;
   const text = label ?? shortAddress(address);
   const baseClass = `inline-flex items-center gap-1 font-mono text-xs ${className}`;
+  // A native title (not a floating tooltip): these links live inside scroll
+  // containers like the activity feed, where an absolutely-positioned bubble
+  // would clip at the container edge.
+  const hint = kind === "tx" ? `Transaction ${address}` : `Address ${address}`;
 
   if (!explorer) {
-    return <span className={baseClass}>{text}</span>;
+    return (
+      <span className={baseClass} title={hint}>
+        {text}
+      </span>
+    );
   }
   return (
     <a
       href={`${explorer.replace(/\/$/, "")}/${kind === "tx" ? "tx" : "address"}/${address}`}
       target="_blank"
       rel="noopener noreferrer"
+      title={`${hint} — view on explorer`}
       className={`${baseClass} text-ink-dim hover:text-nova-bright transition-colors`}
     >
       {text}

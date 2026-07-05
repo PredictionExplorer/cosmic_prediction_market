@@ -129,3 +129,45 @@ describe("BetPanel", () => {
     expect(input.value).toBe("50");
   });
 });
+
+describe("BetPanel — tooltips", () => {
+  it("explains every quote row", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.type(screen.getByTestId("amount-input"), "100");
+
+    const rows: ReadonlyArray<[string, RegExp]> = [
+      ["About the tokens you receive", /pays exactly 1 CST if YES wins/i],
+      ["About the payout", /1 CST per token/i],
+      ["About your entry price", /CST in ÷ tokens out/i],
+      ["About the fee", /share-weighted average of all LP fee votes/i],
+      ["About the minimum received", /reverts instead of filling badly/i],
+    ];
+    for (const [name, copy] of rows) {
+      const trigger = screen.getByRole("button", { name });
+      await user.hover(trigger);
+      expect(screen.getByRole("tooltip")).toHaveTextContent(copy);
+      await user.unhover(trigger);
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    }
+  });
+
+  it("frames the entry tooltip around the chosen side", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByTestId("tab-no"));
+    await user.type(screen.getByTestId("amount-input"), "100");
+    await user.hover(screen.getByRole("button", { name: "About your entry price" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/NO's real chance/i);
+  });
+
+  it("explains max slippage in the settings row", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByLabelText("Slippage settings"));
+    await user.hover(screen.getByRole("button", { name: "About max slippage" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/before your bet reverts/i);
+  });
+});

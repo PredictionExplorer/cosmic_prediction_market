@@ -195,3 +195,58 @@ describe("LiquidityPanel — position, re-voting, removing, fees", () => {
     expect(screen.getByTestId("lp-no-position")).toBeInTheDocument();
   });
 });
+
+describe("LiquidityPanel — tooltips", () => {
+  it('explains "Returned to you" as excess outcome tokens, not a cost', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    // The skewed 2:1 pool returns excess NO tokens for any join.
+    await user.type(screen.getByTestId("lp-amount-input"), "100");
+    expect(screen.getByTestId("lp-preview-excess")).toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: 'About "Returned to you"' }));
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent(/leftover side comes straight back to your wallet/i);
+    expect(tip).toHaveTextContent(/nothing is lost/i);
+    expect(tip).toHaveTextContent(/1 YES \+ 1 NO always redeems for 1 CST/i);
+  });
+
+  it("explains LP shares in the add preview", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.type(screen.getByTestId("lp-amount-input"), "100");
+    await user.hover(screen.getByRole("button", { name: "About LP shares" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/your slice of the pool/i);
+  });
+
+  it("explains the pool fee as a share-weighted vote", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.hover(screen.getByRole("button", { name: "About the pool fee" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/share-weighted average/i);
+  });
+
+  it("warns that any removal pays out ALL accrued fees", async () => {
+    const user = userEvent.setup();
+    renderPanel({ lpShares: 4_000n * ONE, lpPendingFees: 12n * ONE, lpDeclaredFeeBps: 200 });
+
+    await user.click(screen.getByTestId("lp-mode-remove"));
+    await user.hover(screen.getByRole("button", { name: "About accrued fees" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/even if you only withdraw part/i);
+  });
+
+  it("explains the position summary terms on hover", async () => {
+    const user = userEvent.setup();
+    renderPanel({ lpShares: 4_000n * ONE, lpPendingFees: 12n * ONE, lpDeclaredFeeBps: 200 });
+
+    await user.hover(screen.getByText("shares"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/your slice of the pool/i);
+    await user.unhover(screen.getByText("shares"));
+
+    await user.hover(screen.getByText("CST earned"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/claim them anytime/i);
+  });
+});

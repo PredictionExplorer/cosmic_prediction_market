@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { ThresholdRace, trackFraction } from "./threshold-race";
@@ -58,5 +59,27 @@ describe("ThresholdRace", () => {
     render(<ThresholdRace currentCount={5} threshold={0} thresholdKnown={false} prevRoundId={null} />);
     expect(screen.getByTestId("threshold-race")).not.toHaveTextContent(/crossed/i);
     expect(screen.getByTestId("threshold-race")).toHaveTextContent(/threshold pending/i);
+  });
+
+  it("explains the finish line and the running count on hover", async () => {
+    const user = userEvent.setup();
+    render(<ThresholdRace currentCount={640} threshold={800} />);
+
+    await user.hover(screen.getByTestId("race-target"));
+    const target = screen.getByRole("tooltip");
+    expect(target).toHaveTextContent(/last round ended at 800 gestures/i);
+    expect(target).toHaveTextContent(/a tie or less means NO wins/i);
+    await user.unhover(screen.getByTestId("race-target"));
+
+    await user.hover(screen.getByTestId("race-current"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/only ever goes up/i);
+  });
+
+  it("explains the pending finish line while the threshold is unknown", async () => {
+    const user = userEvent.setup();
+    render(<ThresholdRace currentCount={0} threshold={0} thresholdKnown={false} prevRoundId={6n} />);
+
+    await user.hover(screen.getByTestId("race-target"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/unknown until the previous round finishes/i);
   });
 });

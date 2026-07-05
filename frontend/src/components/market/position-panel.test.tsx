@@ -121,3 +121,51 @@ describe("PositionPanel", () => {
     expect(props.onRedeemSets).toHaveBeenCalledWith(40n * ONE);
   });
 });
+
+describe("PositionPanel — tooltips", () => {
+  it('flags "Value now" as a mark-to-market estimate, not an exit price', async () => {
+    const u = userEvent.setup();
+    renderPanel();
+
+    await u.hover(screen.getByRole("button", { name: 'About "Value now"' }));
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent(/mark-to-market estimate/i);
+    expect(tip).toHaveTextContent(/not a guaranteed exit price/i);
+  });
+
+  it("switches to an exact-claim tooltip once resolved", async () => {
+    const u = userEvent.setup();
+    renderPanel({ snapshot: snapshot({ resolved: true, yesWon: true }) });
+
+    await u.hover(screen.getByRole("button", { name: "About your claimable amount" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/1 CST for every winning token/i);
+  });
+
+  it("explains what YES and NO tokens pay", async () => {
+    const u = userEvent.setup();
+    renderPanel();
+
+    await u.hover(screen.getByRole("button", { name: "About YES tokens" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/pays exactly 1 CST if this round beats/i);
+    await u.unhover(screen.getByRole("button", { name: "About YES tokens" }));
+
+    await u.hover(screen.getByRole("button", { name: "About NO tokens" }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/a tie counts as NO/i);
+  });
+
+  it("explains complete sets on the redeem row", async () => {
+    const u = userEvent.setup();
+    renderPanel();
+
+    await u.hover(screen.getByText("complete sets"));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/worth exactly 1 CST no matter how the round ends/i);
+  });
+
+  it("explains the mark price in the header caption", async () => {
+    const u = userEvent.setup();
+    renderPanel();
+
+    await u.hover(screen.getByText(/marked at 50% YES/i));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/implied chance of YES/i);
+  });
+});

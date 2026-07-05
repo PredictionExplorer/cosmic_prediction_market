@@ -15,6 +15,7 @@ import {
 } from "@/lib/math";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { InfoTip, Tooltip } from "@/components/ui/tooltip";
 
 export interface LiquidityPanelProps {
   pool: PoolState;
@@ -188,7 +189,13 @@ export function LiquidityPanel({
 
       {/* The pool's live fee: a share-weighted vote. */}
       <div className="mt-3 flex items-center justify-between rounded-xl border border-line bg-surface-2/40 px-3 py-2.5">
-        <span className="text-xs text-ink-faint">Pool fee — weighted vote of all LPs</span>
+        <span className="flex items-center gap-1 text-xs text-ink-faint">
+          Pool fee — weighted vote of all LPs
+          <InfoTip
+            label="About the pool fee"
+            content="Every bet pays this fee to the pool's liquidity providers. It isn't fixed: each LP declares the fee they want, and the pool charges the share-weighted average of all declarations — so it drifts as LPs join, leave, or re-vote."
+          />
+        </span>
         <span className="font-mono text-sm font-semibold text-nova-bright" data-testid="lp-pool-fee">
           {poolOpen ? formatBps(poolFee) : "—"}
         </span>
@@ -201,20 +208,41 @@ export function LiquidityPanel({
           data-testid="lp-position"
         >
           <div className="text-xs text-ink-dim">
-            <span className="font-mono text-ink">{formatCst(lpShares)}</span> shares · voting{" "}
-            <button
-              className="font-mono text-nova-bright underline-offset-2 hover:underline"
-              onClick={() => {
-                setShowRevote((v) => !v);
-                setRevoteBps(lpDeclaredFeeBps);
-              }}
-              data-testid="lp-my-vote"
-              title="Change your fee vote"
+            <span className="font-mono text-ink">{formatCst(lpShares)}</span>{" "}
+            <Tooltip
+              content="LP shares are your slice of the pool. They set your cut of every trading fee and how much of the reserves you get back when you withdraw."
+              className="align-baseline"
             >
-              {formatBps(BigInt(lpDeclaredFeeBps))}
-            </button>{" "}
+              <span className="cursor-help underline decoration-dotted decoration-ink-faint/60 underline-offset-2">
+                shares
+              </span>
+            </Tooltip>{" "}
+            · voting{" "}
+            <Tooltip
+              content="The fee you're currently voting for. Click to re-declare it — no deposit needed; your whole position switches to the new vote."
+              tabIndex={-1}
+              className="align-baseline"
+            >
+              <button
+                className="font-mono text-nova-bright underline-offset-2 hover:underline"
+                onClick={() => {
+                  setShowRevote((v) => !v);
+                  setRevoteBps(lpDeclaredFeeBps);
+                }}
+                data-testid="lp-my-vote"
+              >
+                {formatBps(BigInt(lpDeclaredFeeBps))}
+              </button>
+            </Tooltip>{" "}
             · <span className="font-mono text-higher" data-testid="lp-pending-fees">{formatCst(lpPendingFees)}</span>{" "}
-            CST earned
+            <Tooltip
+              content="Trading fees your shares have earned so far, in CST. Claim them anytime — they sit in escrow and don't compound into the pool."
+              className="align-baseline"
+            >
+              <span className="cursor-help underline decoration-dotted decoration-ink-faint/60 underline-offset-2">
+                CST earned
+              </span>
+            </Tooltip>
           </div>
           <Button
             variant="outline"
@@ -314,7 +342,13 @@ export function LiquidityPanel({
             {/* Your fee vote (applies to your WHOLE position). */}
             <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-3" data-testid="lp-fee-vote">
               <div className="flex items-baseline justify-between text-xs">
-                <span className="text-ink-faint">Your fee vote — what bettors should pay</span>
+                <span className="flex items-center gap-1 text-ink-faint">
+                  Your fee vote — what bettors should pay
+                  <InfoTip
+                    label="About your fee vote"
+                    content="Your vote, weighted by your shares, pulls the pool's average fee toward this value. A higher fee earns LPs more per bet but makes betting less attractive."
+                  />
+                </span>
                 <span className="font-mono font-semibold text-ink" data-testid="lp-fee-vote-value">
                   {formatPctInput(feeVoteBps)}%
                 </span>
@@ -340,7 +374,13 @@ export function LiquidityPanel({
             {!poolOpen && (
               <div className="mt-3 rounded-xl border border-line bg-surface-2/40 p-3" data-testid="lp-odds">
                 <div className="flex items-baseline justify-between text-xs">
-                  <span className="text-ink-faint">Opening odds — chance of YES</span>
+                  <span className="flex items-center gap-1 text-ink-faint">
+                    Opening odds — chance of YES
+                    <InfoTip
+                      label="About opening odds"
+                      content="The pool prices YES at these odds until trades move it. At 60%, a YES token costs 0.60 CST and a NO token 0.40 CST. Trading starts from here."
+                    />
+                  </span>
                   <span className="font-mono font-semibold text-ink" data-testid="lp-odds-value">
                     {probPct}%
                   </span>
@@ -373,14 +413,33 @@ export function LiquidityPanel({
                 data-testid="lp-add-preview"
               >
                 <div className="flex justify-between">
-                  <dt className="text-ink-faint">LP shares</dt>
+                  <dt className="flex items-center gap-1 text-ink-faint">
+                    LP shares
+                    <InfoTip
+                      label="About LP shares"
+                      content="Your slice of the pool. Shares set your cut of every trading fee and how many YES/NO tokens you get back when you withdraw. They are not CST."
+                    />
+                  </dt>
                   <dd className="font-mono font-semibold text-ink" data-testid="lp-preview-shares">
                     {formatCst(addPreview.shares)}
                   </dd>
                 </div>
                 {(addPreview.excessYes > 0n || addPreview.excessNo > 0n) && (
                   <div className="flex justify-between">
-                    <dt className="text-ink-faint">Returned to you</dt>
+                    <dt className="flex items-center gap-1 text-ink-faint">
+                      Returned to you
+                      <InfoTip
+                        label='About "Returned to you"'
+                        content={
+                          <>
+                            Your CST first mints equal YES + NO tokens, but the pool only keeps them at its current
+                            odds ratio. The leftover side comes straight back to your wallet as outcome tokens.
+                            Nothing is lost — hold them as a position, or pair them with the other side later
+                            (1 YES + 1 NO always redeems for 1 CST).
+                          </>
+                        }
+                      />
+                    </dt>
                     <dd className="font-mono text-ink-dim" data-testid="lp-preview-excess">
                       {addPreview.excessYes > 0n
                         ? `${formatCst(addPreview.excessYes)} YES`
@@ -389,7 +448,13 @@ export function LiquidityPanel({
                   </div>
                 )}
                 <div className="flex justify-between">
-                  <dt className="text-ink-faint">Pool fee after your deposit</dt>
+                  <dt className="flex items-center gap-1 text-ink-faint">
+                    Pool fee after your deposit
+                    <InfoTip
+                      label="About the fee change"
+                      content="Depositing re-votes your whole position at the fee you chose above, which shifts the pool's share-weighted average — from today's fee to the value shown here."
+                    />
+                  </dt>
                   <dd className="font-mono text-nova-bright" data-testid="lp-preview-fee">
                     {poolOpen ? `${formatBps(poolFee)} → ` : ""}
                     {formatBps(addPreview.feeAfter)}
@@ -447,13 +512,25 @@ export function LiquidityPanel({
                 {removePreview && (
                   <dl className="mt-3 space-y-1.5 text-xs">
                     <div className="flex justify-between">
-                      <dt className="text-ink-faint">You receive</dt>
+                      <dt className="flex items-center gap-1 text-ink-faint">
+                        You receive
+                        <InfoTip
+                          label="About what you receive"
+                          content="Your share of the pool's reserves, paid in outcome tokens at the pool's current ratio. Matched YES + NO pairs redeem 1:1 for CST; the unmatched rest keeps market exposure until the round resolves."
+                        />
+                      </dt>
                       <dd className="font-mono text-ink" data-testid="lp-remove-preview">
                         {formatCst(removePreview.yesOut)} YES + {formatCst(removePreview.noOut)} NO
                       </dd>
                     </div>
                     <div className="flex justify-between">
-                      <dt className="text-ink-faint">Plus accrued fees</dt>
+                      <dt className="flex items-center gap-1 text-ink-faint">
+                        Plus accrued fees
+                        <InfoTip
+                          label="About accrued fees"
+                          content="Any removal automatically pays out ALL trading fees you've earned so far — the full amount shown here, even if you only withdraw part of your shares."
+                        />
+                      </dt>
                       <dd className="font-mono text-higher">{formatCst(lpPendingFees)} CST</dd>
                     </div>
                   </dl>

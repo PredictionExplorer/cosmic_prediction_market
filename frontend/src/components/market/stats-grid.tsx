@@ -7,6 +7,7 @@ import type { RoundSnapshot } from "@/lib/market";
 import { totalLiquidity } from "@/lib/market";
 import { currentFeeBps } from "@/lib/math";
 import { Card } from "@/components/ui/card";
+import { InfoTip } from "@/components/ui/tooltip";
 
 interface StatsGridProps {
   snapshot: RoundSnapshot;
@@ -18,7 +19,7 @@ interface Stat {
   readonly label: string;
   readonly value: string;
   readonly unit?: string;
-  readonly hint?: string;
+  readonly hint: string;
 }
 
 /** The round's vital signs at a glance. */
@@ -29,51 +30,52 @@ export function StatsGrid({ snapshot, volume }: StatsGridProps) {
       icon: <Activity className="size-4" aria-hidden />,
       label: "Gestures so far",
       value: formatCount(snapshot.currentCount),
-      hint: "bids placed in this round to date",
+      hint: "Bids placed in this Cosmic Signature round so far. Each bid is one gesture, and the count only ever goes up.",
     },
     {
       icon: <Target className="size-4" aria-hidden />,
       label: "To beat",
       value: snapshot.thresholdKnown ? formatCount(snapshot.threshold) : "—",
       hint: snapshot.thresholdKnown
-        ? "the previous round's final count — YES needs strictly more"
-        : "locks when the previous round ends — until then the bar is still forming",
+        ? "Last round's final gesture count. YES wins only if this round finishes strictly higher — a tie means NO wins."
+        : "The bar is still forming: it locks at the previous round's final count the moment that round ends.",
     },
     {
       icon: <TrendingUp className="size-4" aria-hidden />,
       label: "Volume",
       value: formatCst(volume),
       unit: "CST",
-      hint: "total CST wagered through bets this round",
+      hint: "Total CST wagered through bets in this market, adding up both YES and NO bets.",
     },
     {
       icon: <Droplets className="size-4" aria-hidden />,
       label: "Liquidity",
       value: formatCst(totalLiquidity(snapshot.pool)),
-      hint: "outcome tokens in the pool",
+      hint: "Outcome tokens sitting in the pool — the market's depth. A deeper pool moves less when a bet lands.",
     },
     {
       icon: <Percent className="size-4" aria-hidden />,
       label: "Pool fee",
       value: funded ? formatBps(currentFeeBps(snapshot.pool)) : "—",
-      hint: "the share-weighted average of all LPs' fee votes",
+      hint: "What bettors pay the liquidity providers on every bet: the share-weighted average of all LPs' fee votes.",
     },
     {
       icon: <Coins className="size-4" aria-hidden />,
       label: "LP fees unclaimed",
       value: formatCst(snapshot.pool.feeReserve),
       unit: "CST",
-      hint: "earned by liquidity providers, claimable anytime",
+      hint: "Trading fees earned by liquidity providers but not yet collected. LPs can claim their cut at any time.",
     },
   ];
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6" data-testid="stats-grid">
       {stats.map((stat) => (
-        <Card key={stat.label} className="p-4" title={stat.hint}>
+        <Card key={stat.label} className="p-4">
           <div className="flex items-center gap-1.5 text-ink-faint">
             {stat.icon}
             <p className="text-[10px] font-semibold uppercase tracking-wider">{stat.label}</p>
+            <InfoTip label={`About "${stat.label}"`} content={stat.hint} iconClassName="size-3" />
           </div>
           <p className="mt-1.5 font-mono text-sm font-semibold text-ink">
             {stat.value}

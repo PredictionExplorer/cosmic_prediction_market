@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { RoundSnapshot } from "@/lib/market";
 import { ONE } from "@/lib/math";
@@ -67,5 +68,35 @@ describe("StatsGrid", () => {
     expect(statValue(/liquidity/i)).toContain("4,000");
     expect(statValue(/pool fee/i)).toContain("2.5%");
     expect(statValue(/volume/i)).toContain("123");
+  });
+
+  it("gives every stat a help tooltip", () => {
+    render(<StatsGrid snapshot={snapshot()} volume={0n} />);
+    for (const label of ["Gestures so far", "To beat", "Volume", "Liquidity", "Pool fee", "LP fees unclaimed"]) {
+      expect(screen.getByRole("button", { name: `About "${label}"` })).toBeInTheDocument();
+    }
+  });
+
+  it('explains the tie rule in the "To beat" tooltip', async () => {
+    const user = userEvent.setup();
+    render(<StatsGrid snapshot={snapshot()} volume={0n} />);
+
+    await user.hover(screen.getByRole("button", { name: 'About "To beat"' }));
+    const tip = screen.getByRole("tooltip");
+    expect(tip).toHaveTextContent(/strictly higher/i);
+    expect(tip).toHaveTextContent(/a tie means NO wins/i);
+  });
+
+  it("swaps the threshold tooltip while the bar is still forming", async () => {
+    const user = userEvent.setup();
+    render(
+      <StatsGrid
+        snapshot={snapshot({ roundId: 7n, gameRoundNum: 5n, thresholdKnown: false, threshold: 0n })}
+        volume={0n}
+      />,
+    );
+
+    await user.hover(screen.getByRole("button", { name: 'About "To beat"' }));
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/locks at the previous round's final count/i);
   });
 });
