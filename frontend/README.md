@@ -12,6 +12,15 @@ earnings), your position with mark-to-market value, one-click resolution
 (including early resolution when the threshold is crossed), claiming, and
 navigation across past rounds.
 
+Everything explanatory — the intro hero, how-it-works, footer, and the whole
+FAQ (answers included) — is server-rendered static HTML, so search engines
+and AI crawlers read the full story without executing JavaScript. SEO ships
+complete: Open Graph / Twitter cards generated at build time, canonical URLs,
+`robots.txt`, `sitemap.xml`, a web app manifest, JSON-LD (`WebSite`,
+`WebApplication`, and a full `FAQPage`), and `/llms.txt` for AI agents. The
+FAQ page carries no wallet code at all, and the wallet modal (plus motion's
+animation engine) loads on demand rather than in the first-load bundle.
+
 ## Stack
 
 - [Next.js 16](https://nextjs.org) (App Router, Turbopack) + React 19 + TypeScript (strict)
@@ -126,6 +135,7 @@ All config is env-driven and validated at startup (`src/lib/config.ts`):
 | `NEXT_PUBLIC_RPC_URL` | no | custom RPC (falls back to the chain's public one) |
 | `NEXT_PUBLIC_DEPLOY_BLOCK` | no | series deploy block — speeds up event scans |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | no | enables WalletConnect for mobile wallets |
+| `NEXT_PUBLIC_SITE_URL` | no | canonical origin for SEO metadata, sitemap and social cards (defaults to the production domain) |
 
 One deployment serves **every** round forever: the app follows the game's
 current round live, and `?round=N` links to any past round (for claims and

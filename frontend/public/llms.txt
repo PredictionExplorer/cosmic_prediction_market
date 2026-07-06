@@ -1,0 +1,27 @@
+# Gesture Market
+
+> Gesture Market is a fully collateralized YES/NO prediction market on the Cosmic Signature game. Every game round asks the same question: will this round end with more gestures (bids) than the previous round? Bets are placed in CST (Cosmic Signature Token) on Arbitrum One, and every winning token pays out exactly 1 CST. The whole series runs on one immutable smart contract — no owner, no admin keys, no oracles.
+
+Key facts:
+
+- One market per Cosmic Signature round, launched automatically, forever. Future rounds are tradable before they start.
+- YES wins if the round's final gesture count is STRICTLY greater than the previous round's final count (the "threshold"); a tie means NO wins.
+- Gestures are bids in the Cosmic Signature game. The count is public on-chain while a round runs and only ever goes up, so the moment it crosses the threshold, YES is certain: betting halts atomically and the round can be resolved early.
+- Prices come from a constant-product AMM pool (one per round). The implied YES probability is reserveNo / (reserveYes + reserveNo). Liquidity providers vote the trading fee (share-weighted average, capped at 10%).
+- Fully collateralized by construction: 1 CST always mints 1 YES + 1 NO, and a pair always redeems for 1 CST. Resolution is permissionless and read directly from the game contract.
+- Chain: Arbitrum One (chain id 42161). Market contract: 0xDe5bC71e94B991265B2DfDCE0921245B70c51b4d. Cosmic Signature game proxy: 0x6a714Ae7B5b6eA520F6BCA23d2E609C4Fd5863F2. CST token: 0xAD91843e6A58Ba560F577E676986AFb1dba6FBA0.
+- To bet you need: a wallet on Arbitrum One, CST, and a little ETH for gas.
+
+## Pages
+
+- [Market](https://cosmicsignature.bet/): the live market — current YES probability, gesture count vs threshold race, place YES/NO bets, provide liquidity, resolve rounds, and claim winnings. `?round=N` shows any past or future round.
+- [FAQ](https://cosmicsignature.bet/faq): every question answered — the basics, betting mechanics, pricing and fees, liquidity provision and fee voting, resolution and claiming, and the safety model.
+
+## About Cosmic Signature
+
+- [Cosmic Signature](https://cosmicsignature.com): the on-chain NFT game this market is built on. Players bid ("gesture") each round to win prizes; each round ends with a final gesture count — the number this market bets on. Playing the game earns CST, the market's currency.
+
+## Notes
+
+- Prediction markets involve risk; bet only what you can afford to lose.
+- The market contract is immutable and permissionless: anyone can bet, provide liquidity, resolve, or claim. There is no deadline on claiming winnings.

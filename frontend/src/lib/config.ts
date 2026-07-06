@@ -10,6 +10,17 @@ export const DEFAULT_CHAIN_ID = arbitrum.id;
 /** Cosmic Signature game proxy on Arbitrum One (informational; the market stores its own reference). */
 export const COSMIC_GAME_ADDRESS: Address = "0x6a714Ae7B5b6eA520F6BCA23d2E609C4Fd5863F2";
 
+/** CST token on Arbitrum One (public constant, used for explorer links). */
+const ARBITRUM_CST_ADDRESS: Address = "0xAD91843e6A58Ba560F577E676986AFb1dba6FBA0";
+
+/**
+ * The CST address knowable without an RPC call: fixed on Arbitrum One, but on
+ * local sandboxes the mock CST lives wherever the deploy script put it.
+ */
+export function cstAddressForChain(chainId: number): Address | null {
+  return chainId === arbitrum.id ? ARBITRUM_CST_ADDRESS : null;
+}
+
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 export interface AppConfig {
@@ -118,3 +129,6 @@ export const appConfig: AppConfig = parseAppConfig({
   walletConnectProjectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID,
   deployBlock: process.env.NEXT_PUBLIC_DEPLOY_BLOCK,
 });
+
+/** CST on this deployment's chain, when statically knowable (see {@link cstAddressForChain}). */
+export const COSMIC_CST_ADDRESS: Address | null = cstAddressForChain(appConfig.chain.id);

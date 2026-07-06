@@ -3,6 +3,7 @@ import { createConfig, createStorage, http } from "wagmi";
 import { mock, walletConnect } from "wagmi/connectors";
 import { anvil } from "viem/chains";
 import { appConfig } from "./config";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "./site";
 
 function buildConnectors(): CreateConnectorFn[] {
   const connectors: CreateConnectorFn[] = [];
@@ -11,10 +12,10 @@ function buildConnectors(): CreateConnectorFn[] {
       walletConnect({
         projectId: appConfig.walletConnectProjectId,
         metadata: {
-          name: "Gesture Market",
-          description: "Scalar prediction market on Cosmic Signature gesture counts",
-          url: "https://gesture.market",
-          icons: [],
+          name: SITE_NAME,
+          description: SITE_DESCRIPTION,
+          url: SITE_URL,
+          icons: [`${SITE_URL}/icon-512.png`],
         },
         showQrModal: true,
       }),

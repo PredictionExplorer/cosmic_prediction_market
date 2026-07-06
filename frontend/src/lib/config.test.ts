@@ -1,7 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { parseAddress, parseAppConfig, resolveMarketAddress, resolveRoundOverride } from "./config";
+import {
+  cstAddressForChain,
+  parseAddress,
+  parseAppConfig,
+  resolveMarketAddress,
+  resolveRoundOverride,
+} from "./config";
 
 const MARKET = "0x1111111111111111111111111111111111111111";
+
+describe("cstAddressForChain", () => {
+  it("knows the CST token on Arbitrum One", () => {
+    expect(cstAddressForChain(42161)).toBe("0xAD91843e6A58Ba560F577E676986AFb1dba6FBA0");
+  });
+
+  it("returns null on chains where CST is a deploy-time mock", () => {
+    expect(cstAddressForChain(31337)).toBeNull();
+    expect(cstAddressForChain(1)).toBeNull();
+  });
+});
 
 describe("parseAddress", () => {
   it("returns null for absent values", () => {

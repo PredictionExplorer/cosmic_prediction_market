@@ -1,38 +1,24 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { Header } from "./header";
 
-let pathname = "/";
-vi.mock("next/navigation", () => ({
-  usePathname: () => pathname,
-}));
-
-// The wallet button needs a wagmi provider tree; the header's own concerns don't.
-vi.mock("@/components/wallet/connect-button", () => ({
-  ConnectButton: () => <button>Connect wallet</button>,
-}));
-
 describe("Header", () => {
-  beforeEach(() => {
-    pathname = "/";
-  });
-
   it("shows a prominent beta badge", () => {
-    render(<Header />);
+    render(<Header active="market" />);
     expect(screen.getByTestId("beta-badge")).toHaveTextContent(/beta/i);
   });
 
   it("explains what beta means on hover", async () => {
     const user = userEvent.setup();
-    render(<Header />);
+    render(<Header active="market" />);
 
     await user.hover(screen.getByTestId("beta-badge"));
     expect(screen.getByRole("tooltip")).toHaveTextContent(/size your bets accordingly/i);
   });
 
   it("links the brand home and navigates to Market and FAQ", () => {
-    render(<Header />);
+    render(<Header active="market" />);
     expect(screen.getByRole("link", { name: /gesture/i })).toHaveAttribute("href", "/");
 
     const nav = screen.getByRole("navigation", { name: /primary/i });
@@ -41,21 +27,27 @@ describe("Header", () => {
     expect(nav).toContainElement(screen.getByRole("link", { name: "FAQ" }));
   });
 
-  it("marks Market as current on the home page", () => {
-    render(<Header />);
+  it("marks Market as current on the market page", () => {
+    render(<Header active="market" />);
     expect(screen.getByRole("link", { name: "Market" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "FAQ" })).not.toHaveAttribute("aria-current");
   });
 
   it("marks FAQ as current on the FAQ page", () => {
-    pathname = "/faq";
-    render(<Header />);
+    render(<Header active="faq" />);
     expect(screen.getByRole("link", { name: "FAQ" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Market" })).not.toHaveAttribute("aria-current");
   });
 
-  it("keeps the wallet entry point", () => {
-    render(<Header />);
+  it("renders whatever action the page provides (wallet button, CTA…)", () => {
+    render(<Header active="market" actions={<button>Connect wallet</button>} />);
     expect(screen.getByRole("button", { name: /connect wallet/i })).toBeInTheDocument();
+  });
+
+  it("keeps the outbound link to the game", () => {
+    render(<Header active="market" />);
+    const link = screen.getByRole("link", { name: /play cosmic signature/i });
+    expect(link).toHaveAttribute("href", "https://cosmicsignature.com");
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
   });
 });

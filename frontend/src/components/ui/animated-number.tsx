@@ -1,6 +1,5 @@
 "use client";
 
-import { animate, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 interface AnimatedNumberProps {
@@ -11,9 +10,17 @@ interface AnimatedNumberProps {
   durationS?: number;
 }
 
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 /**
- * Smoothly tweens between numeric values (the live prediction, position value…).
- * Falls back to instant updates when the user prefers reduced motion.
+ * Smoothly tweens between numeric values (the live prediction, position value…)
+ * with a dependency-free requestAnimationFrame loop — no animation library in
+ * the first-load bundle for a number ticker. Falls back to instant updates
+ * when the user prefers reduced motion.
  */
 export function AnimatedNumber({
   value,
@@ -21,24 +28,26 @@ export function AnimatedNumber({
   className,
   durationS = 0.7,
 }: AnimatedNumberProps) {
-  const reduced = useReducedMotion();
   const [display, setDisplay] = useState(value);
   const previous = useRef(value);
 
   useEffect(() => {
-    if (reduced || previous.current === value) {
-      previous.current = value;
+    const from = previous.current;
+    previous.current = value;
+    if (from === value || prefersReducedMotion()) {
       setDisplay(value);
       return;
     }
-    const controls = animate(previous.current, value, {
-      duration: durationS,
-      ease: "easeOut",
-      onUpdate: setDisplay,
+
+    const durationMs = durationS * 1000;
+    const start = performance.now();
+    let frame = requestAnimationFrame(function tick(now: number) {
+      const t = Math.min(1, (now - start) / durationMs);
+      setDisplay(from + (value - from) * easeOutCubic(t));
+      if (t < 1) frame = requestAnimationFrame(tick);
     });
-    previous.current = value;
-    return () => controls.stop();
-  }, [value, reduced, durationS]);
+    return () => cancelAnimationFrame(frame);
+  }, [value, durationS]);
 
   return (
     <span className={className} data-testid="animated-number">

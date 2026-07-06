@@ -1,23 +1,63 @@
 import type { Metadata } from "next";
-import { appConfig } from "@/lib/config";
+import Link from "next/link";
+import { appConfig, COSMIC_CST_ADDRESS } from "@/lib/config";
+import { SITE_NAME } from "@/lib/site";
+import { faqPageJsonLd } from "@/lib/structured-data";
+import { FAQ_CATEGORIES } from "@/components/faq/faq-data";
 import { FaqContent } from "@/components/faq/faq-content";
 import { Footer } from "@/components/layout/footer";
 import { Header } from "@/components/layout/header";
+import { JsonLd } from "@/components/seo/json-ld";
+
+const TITLE = "FAQ";
+const DESCRIPTION =
+  "How Gesture Market works: placing YES/NO bets on Cosmic Signature rounds, how odds and fees form, round resolution, liquidity provision, and the safety model.";
 
 export const metadata: Metadata = {
-  title: "FAQ — Gesture Market",
-  description:
-    "How Gesture Market works: placing YES/NO bets on Cosmic Signature rounds, how odds and fees form, round resolution, liquidity provision, and the safety model.",
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: {
+    canonical: "/faq",
+  },
+  openGraph: {
+    type: "website",
+    siteName: SITE_NAME,
+    url: "/faq",
+    title: `${TITLE} — ${SITE_NAME}`,
+    description: DESCRIPTION,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${TITLE} — ${SITE_NAME}`,
+    description: DESCRIPTION,
+  },
 };
 
+/**
+ * The FAQ ships zero wallet JavaScript: the header gets a plain CTA back to
+ * the market instead of the connect button, and every answer is in the
+ * server-rendered HTML (plus machine-readable FAQPage JSON-LD below).
+ */
 export default function FaqPage() {
   return (
     <>
-      <Header />
+      <Header
+        active="faq"
+        actions={
+          <Link
+            href="/"
+            className="inline-flex h-9 items-center justify-center rounded-xl bg-nova px-4 text-sm font-semibold text-space shadow-glow-nova transition-all hover:bg-nova-bright"
+          >
+            Open the market
+          </Link>
+        }
+      />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">
         <FaqContent />
-        <Footer marketAddress={appConfig.marketAddress} cstAddress={null} />
       </main>
+      <Footer marketAddress={appConfig.marketAddress} cstAddress={COSMIC_CST_ADDRESS} />
+      <JsonLd data={faqPageJsonLd(FAQ_CATEGORIES.flatMap((category) => category.items))} />
     </>
   );
 }

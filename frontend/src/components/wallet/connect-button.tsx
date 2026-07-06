@@ -7,7 +7,7 @@ import { useMounted } from "@/hooks/use-mounted";
 import { appConfig } from "@/lib/config";
 import { shortAddress } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { WalletModal } from "./wallet-modal";
+import { LazyWalletModal } from "./lazy-wallet-modal";
 
 /**
  * The single wallet entry point: connect → wrong-network warning → connected
@@ -20,6 +20,8 @@ export function ConnectButton() {
   const switchChain = useSwitchChain();
   const disconnect = useDisconnect();
   const [modalOpen, setModalOpen] = useState(false);
+  // Keeps the modal chunk out of first-load JS until the user asks for it.
+  const [modalRequested, setModalRequested] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -49,11 +51,18 @@ export function ConnectButton() {
   if (connection.status !== "connected") {
     return (
       <>
-        <Button variant="nova" onClick={() => setModalOpen(true)} loading={connection.status === "reconnecting"}>
+        <Button
+          variant="nova"
+          onClick={() => {
+            setModalRequested(true);
+            setModalOpen(true);
+          }}
+          loading={connection.status === "reconnecting"}
+        >
           <Wallet className="size-4" aria-hidden />
           Connect wallet
         </Button>
-        <WalletModal open={modalOpen} onClose={() => setModalOpen(false)} />
+        {modalRequested && <LazyWalletModal open={modalOpen} onClose={() => setModalOpen(false)} />}
       </>
     );
   }

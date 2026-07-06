@@ -26,4 +26,41 @@ describe("AnimatedNumber", () => {
       vi.useRealTimers();
     }
   });
+
+  it("passes through intermediate values while tweening", async () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(<AnimatedNumber value={0} durationS={1} format={(v) => v.toFixed(2)} />);
+      rerender(<AnimatedNumber value={100} durationS={1} format={(v) => v.toFixed(2)} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      const mid = Number(screen.getByTestId("animated-number").textContent);
+      expect(mid).toBeGreaterThan(0);
+      expect(mid).toBeLessThan(100);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("jumps instantly when the user prefers reduced motion", () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes("prefers-reduced-motion"),
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      const { rerender } = render(<AnimatedNumber value={100} />);
+      rerender(<AnimatedNumber value={200} />);
+      expect(screen.getByTestId("animated-number")).toHaveTextContent("200.0");
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

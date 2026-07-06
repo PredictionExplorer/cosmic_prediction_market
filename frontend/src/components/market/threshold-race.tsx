@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, useReducedMotion } from "motion/react";
+import { m, useReducedMotion } from "motion/react";
 import { formatCount } from "@/lib/format";
 import { Tooltip } from "@/components/ui/tooltip";
 
@@ -81,7 +81,7 @@ export function ThresholdRace({
         {/* Track */}
         <div className="absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full bg-surface-2" />
         {/* Progress fill */}
-        <motion.div
+        <m.div
           data-testid="race-fill"
           className={`absolute left-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full ${fillColor}`}
           animate={{ width: `${progressPct}%` }}
@@ -96,7 +96,7 @@ export function ThresholdRace({
           style={{ left: `${thresholdPct}%` }}
         />
         {/* Runner marker */}
-        <motion.div
+        <m.div
           data-testid="race-marker"
           className="absolute top-1/2 z-10 -translate-x-1/2 -translate-y-1/2"
           animate={{ left: `${progressPct}%` }}
@@ -112,7 +112,7 @@ export function ThresholdRace({
                 : "bg-ink shadow-[0_0_14px_rgba(240,237,250,0.7)]",
             ].join(" ")}
           />
-        </motion.div>
+        </m.div>
       </div>
 
       <div className="mt-1 flex items-baseline justify-between font-mono text-xs text-ink-faint">

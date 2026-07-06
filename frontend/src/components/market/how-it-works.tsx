@@ -33,7 +33,7 @@ const STEPS = [
 /** A plain-language explainer of the market mechanism. */
 export function HowItWorks() {
   return (
-    <section aria-labelledby="how-it-works-title" data-testid="how-it-works">
+    <section id="how-it-works" aria-labelledby="how-it-works-title" data-testid="how-it-works" className="scroll-mt-24">
       <div className="flex items-baseline justify-between gap-4">
         <h2 id="how-it-works-title" className="font-display text-lg font-semibold">
           How it works

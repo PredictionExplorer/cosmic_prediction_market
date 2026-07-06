@@ -2,9 +2,12 @@
  * Generates the app icon set from a single source of truth (the lucide
  * "orbit" glyph used in the site header) in the Gesture Market palette:
  *
- *   src/app/icon.svg       transparent SVG favicon, dark/light aware
- *   src/app/favicon.ico    legacy fallback, 16/32/48 RGBA PNG entries
- *   src/app/apple-icon.png 180x180 opaque touch icon
+ *   src/app/icon.svg              transparent SVG favicon, dark/light aware
+ *   src/app/favicon.ico           legacy fallback, 16/32/48 RGBA PNG entries
+ *   src/app/apple-icon.png        180x180 opaque touch icon
+ *   public/icon-192.png           PWA/manifest tile
+ *   public/icon-512.png           PWA/manifest tile
+ *   public/icon-maskable-512.png  maskable tile (glyph inside the safe zone)
  *
  * Regenerate with: pnpm icons
  */
@@ -14,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const appDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "app");
+const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 
 // Geometry of lucide "orbit" (24x24 grid), as rendered by the header logo.
 const ARC_A = "M20.341 6.484A10 10 0 0 1 10.266 21.85";
@@ -112,8 +116,29 @@ const appleSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="18
   <g transform="translate(90 90) scale(4.6) translate(-12 -12)">${glyph(DARK)}</g>
 </svg>`;
 
+// --- manifest icons: opaque deep-space tiles for PWA launchers ------------
+// glyphScale is the fraction of the tile the 24px glyph grid spans; maskable
+// icons keep the glyph inside the central safe zone (~80% circle).
+
+function tileSvg(size, glyphScale) {
+  const scale = (size * glyphScale) / 24;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  <defs>
+    <radialGradient id="glow" cx="30%" cy="16%" r="90%">
+      <stop offset="0%" stop-color="#8b7bff" stop-opacity="0.30"/>
+      <stop offset="55%" stop-color="#8b7bff" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#8b7bff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="${size}" height="${size}" fill="#0c0a18"/>
+  <rect width="${size}" height="${size}" fill="url(#glow)"/>
+  <g transform="translate(${size / 2} ${size / 2}) scale(${scale}) translate(-12 -12)">${glyph(DARK)}</g>
+</svg>`;
+}
+
 async function main() {
   await mkdir(appDir, { recursive: true });
+  await mkdir(publicDir, { recursive: true });
 
   await writeFile(path.join(appDir, "icon.svg"), iconSvg);
 
@@ -133,7 +158,19 @@ async function main() {
   const applePng = await sharp(Buffer.from(appleSvg)).png().toBuffer();
   await writeFile(path.join(appDir, "apple-icon.png"), applePng);
 
-  console.log("Wrote icon.svg, favicon.ico (16/32/48), apple-icon.png");
+  const manifestIcons = [
+    { file: "icon-192.png", size: 192, glyphScale: 0.62 },
+    { file: "icon-512.png", size: 512, glyphScale: 0.62 },
+    { file: "icon-maskable-512.png", size: 512, glyphScale: 0.44 },
+  ];
+  for (const { file, size, glyphScale } of manifestIcons) {
+    const png = await sharp(Buffer.from(tileSvg(size, glyphScale))).png().toBuffer();
+    await writeFile(path.join(publicDir, file), png);
+  }
+
+  console.log(
+    "Wrote icon.svg, favicon.ico (16/32/48), apple-icon.png, icon-192/512.png, icon-maskable-512.png",
+  );
 }
 
 await main();

@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, m } from "motion/react";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -49,7 +49,7 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
   return createPortal(
     <AnimatePresence>
       {open && (
-        <motion.div
+        <m.div
           className="fixed inset-0 z-50 flex items-center justify-center bg-space/80 backdrop-blur-sm p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -59,7 +59,7 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
           aria-modal="true"
           aria-label="Connect a wallet"
         >
-          <motion.div
+          <m.div
             className="w-full max-w-sm rounded-2xl border border-line bg-surface p-5 shadow-[0_24px_80px_rgba(2,0,16,0.8)]"
             initial={{ opacity: 0, scale: 0.95, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -128,8 +128,8 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
                 ))}
               </ul>
             )}
-          </motion.div>
-        </motion.div>
+          </m.div>
+        </m.div>
       )}
     </AnimatePresence>,
     document.body,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useChainId, useConnection } from "wagmi";
 import { useMarket } from "@/hooks/use-market";
 import { useMarketActions } from "@/hooks/use-market-actions";
@@ -9,12 +9,10 @@ import { appConfig } from "@/lib/config";
 import { replayRound } from "@/lib/history";
 import { canAddLiquidity, hasLpPosition, isResolvable, roundPhase } from "@/lib/market";
 import type { Address } from "viem";
-import { Footer } from "@/components/layout/footer";
-import { WalletModal } from "@/components/wallet/wallet-modal";
+import { LazyWalletModal } from "@/components/wallet/lazy-wallet-modal";
 import { ActivityFeed } from "./activity-feed";
 import { BetPanel } from "./bet-panel";
 import { BetClosed, MarketError, MarketSkeleton } from "./empty-states";
-import { HowItWorks } from "./how-it-works";
 import { LiquidityPanel } from "./liquidity-panel";
 import { MarketHero } from "./market-hero";
 import { PositionPanel } from "./position-panel";
@@ -39,17 +37,19 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
   const connection = useConnection();
   const chainId = useChainId();
   const [walletModalOpen, setWalletModalOpen] = useState(false);
+  // The modal's chunk stays unloaded until the user first asks to connect;
+  // after that it stays mounted so open/close animations work.
+  const [walletModalRequested, setWalletModalRequested] = useState(false);
+  const openWalletModal = useCallback(() => {
+    setWalletModalRequested(true);
+    setWalletModalOpen(true);
+  }, []);
 
   // The chart and cross-checkable pool history, rebuilt purely from events.
   const history = useMemo(() => replayRound(events.poolEvents).points, [events.poolEvents]);
 
   if (error && !snapshot) {
-    return (
-      <>
-        <MarketError message={error.message} onRetry={refetchAll} />
-        <Footer marketAddress={seriesAddress} cstAddress={null} />
-      </>
-    );
+    return <MarketError message={error.message} onRetry={refetchAll} />;
   }
   if (isLoading || !snapshot) {
     return <MarketSkeleton />;
@@ -69,7 +69,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
           pending={actions.pending === "resolve"}
           connected={connected}
           onResolve={actions.resolve}
-          onConnect={() => setWalletModalOpen(true)}
+          onConnect={openWalletModal}
         />
       )}
 
@@ -92,7 +92,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
                   balance={connected && user ? user.cstBalance : null}
                   allowance={connected && user ? user.cstAllowance : null}
                   pendingAction={actions.pending === "approve" || actions.pending === "bet" ? actions.pending : null}
-                  onConnect={() => setWalletModalOpen(true)}
+                  onConnect={openWalletModal}
                   onApprove={(amount) => actions.approve(snapshot.cstAddress, amount)}
                   onBet={actions.bet}
                 />
@@ -118,7 +118,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
                     ? actions.pending
                     : null
                 }
-                onConnect={() => setWalletModalOpen(true)}
+                onConnect={openWalletModal}
                 onApprove={(amount) => actions.approve(snapshot.cstAddress, amount)}
                 onAdd={actions.addLiquidity}
                 onRemove={actions.removeLiquidity}
@@ -140,11 +140,7 @@ export function MarketApp({ seriesAddress, roundOverride }: MarketAppProps) {
         </div>
       </div>
 
-      <HowItWorks />
-
-      <Footer marketAddress={seriesAddress} cstAddress={snapshot.cstAddress} />
-
-      <WalletModal open={walletModalOpen} onClose={() => setWalletModalOpen(false)} />
+      {walletModalRequested && <LazyWalletModal open={walletModalOpen} onClose={() => setWalletModalOpen(false)} />}
     </div>
   );
 }

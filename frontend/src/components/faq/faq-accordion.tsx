@@ -1,18 +1,19 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 import type { FaqItem } from "./faq-data";
 import { Card } from "@/components/ui/card";
 
 /**
- * One expandable Q&A. Items are independent (opening one never closes
- * another) and collapsed by default so the page reads as a scannable index.
+ * One expandable Q&A. The answer is ALWAYS in the DOM — crawlers and AI
+ * agents read it straight from the server-rendered HTML — and expanding only
+ * reveals it visually, via a pure-CSS grid-rows transition (no animation
+ * library on this page). Items are independent: opening one never closes
+ * another, so the page reads as a scannable index.
  */
 function FaqAccordionItem({ item }: { item: FaqItem }) {
   const [open, setOpen] = useState(false);
-  const reducedMotion = useReducedMotion();
   const buttonId = `faq-q-${item.id}`;
   const panelId = `faq-a-${item.id}`;
 
@@ -37,29 +38,32 @@ function FaqAccordionItem({ item }: { item: FaqItem }) {
           />
         </button>
       </h3>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            id={panelId}
-            role="region"
-            aria-labelledby={buttonId}
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.22, ease: "easeOut" }}
-            className="overflow-hidden"
-            data-testid={`faq-answer-${item.id}`}
-          >
-            <div className="space-y-2.5 border-t border-line px-5 pb-5 pt-4">
-              {item.answer.map((paragraph) => (
-                <p key={paragraph} className="text-sm leading-relaxed text-ink-dim">
-                  {paragraph}
-                </p>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div
+        className={[
+          "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        ].join(" ")}
+      >
+        <div
+          id={panelId}
+          role="region"
+          aria-labelledby={buttonId}
+          aria-hidden={!open}
+          data-testid={`faq-answer-${item.id}`}
+          className={[
+            "min-h-0 overflow-hidden transition-[visibility] duration-200 motion-reduce:transition-none",
+            open ? "visible" : "invisible",
+          ].join(" ")}
+        >
+          <div className="space-y-2.5 border-t border-line px-5 pb-5 pt-4">
+            {item.answer.map((paragraph) => (
+              <p key={paragraph} className="text-sm leading-relaxed text-ink-dim">
+                {paragraph}
+              </p>
+            ))}
+          </div>
+        </div>
+      </div>
     </Card>
   );
 }

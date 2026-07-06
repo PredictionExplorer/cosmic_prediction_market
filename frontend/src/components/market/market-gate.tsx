@@ -2,7 +2,6 @@
 
 import { useSearchParams } from "next/navigation";
 import { appConfig, resolveMarketAddress, resolveRoundOverride } from "@/lib/config";
-import { Footer } from "@/components/layout/footer";
 import { NoMarketConfigured } from "./empty-states";
 import { MarketApp } from "./market-app";
 
@@ -18,12 +17,9 @@ export function MarketGate() {
 
   if (seriesAddress === null) {
     return (
-      <>
-        <div className="py-16">
-          <NoMarketConfigured />
-        </div>
-        <Footer marketAddress={null} cstAddress={null} />
-      </>
+      <div className="py-16">
+        <NoMarketConfigured />
+      </div>
     );
   }
   return <MarketApp seriesAddress={seriesAddress} roundOverride={roundOverride} />;
