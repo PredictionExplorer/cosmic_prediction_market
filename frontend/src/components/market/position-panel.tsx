@@ -32,7 +32,7 @@ export function PositionPanel({ snapshot, user, pendingAction, onRedeemSets, onC
   if (!hasPosition(user)) return null;
 
   return (
-    <Card accent="nova" className="p-5" data-testid="position-panel">
+    <Card accent="signal" className="p-5" data-testid="position-panel">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-lg font-semibold">Your position</h2>
         <Tooltip
@@ -83,8 +83,8 @@ export function PositionPanel({ snapshot, user, pendingAction, onRedeemSets, onC
             {formatCst(user.noBalance)}
           </p>
         </div>
-        <div className="rounded-xl border border-nova/25 bg-nova/8 p-3">
-          <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-nova-bright">
+        <div className="rounded-xl border border-signal/25 bg-signal/8 p-3">
+          <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-signal-bright">
             {phase === "resolved" ? "Claimable" : "Value now"}
             <InfoTip
               label={phase === "resolved" ? "About your claimable amount" : 'About "Value now"'}
@@ -113,7 +113,7 @@ export function PositionPanel({ snapshot, user, pendingAction, onRedeemSets, onC
       <div className="mt-4 flex flex-col gap-2">
         {phase === "resolved" && (
           <Button
-            variant="nova"
+            variant="signal"
             size="lg"
             className="w-full"
             loading={pendingAction === "claim"}

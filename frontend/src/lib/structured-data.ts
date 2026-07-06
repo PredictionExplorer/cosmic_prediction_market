@@ -29,7 +29,7 @@ export function webSiteJsonLd(): JsonLd {
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: SITE_NAME,
-    alternateName: "GestureMarket",
+    alternateName: "ChaosZero",
     url: SITE_URL,
     description: SITE_DESCRIPTION,
   };

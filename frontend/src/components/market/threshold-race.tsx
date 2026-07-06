@@ -73,7 +73,7 @@ export function ThresholdRace({
   }
   const progressPct = trackFraction(threshold, currentCount) * 100;
   const thresholdPct = trackFraction(threshold, threshold) * 100;
-  const fillColor = crossed ? "bg-higher/80" : "bg-nova/70";
+  const fillColor = crossed ? "bg-higher/80" : "bg-signal/70";
 
   return (
     <div data-testid="threshold-race" className="w-full select-none">
@@ -106,7 +106,7 @@ export function ThresholdRace({
         >
           <div
             className={[
-              "size-4 rounded-full border-[3px] border-space",
+              "size-4 rounded-full border-[3px] border-void",
               crossed || (resolved && yesWon)
                 ? "bg-higher shadow-[0_0_16px_rgba(94,228,162,0.9)]"
                 : "bg-ink shadow-[0_0_14px_rgba(240,237,250,0.7)]",

@@ -8,7 +8,8 @@ describe("social share card", () => {
     expect(OG_SIZE).toEqual({ width: 1200, height: 630 });
   });
 
-  it("has alt text that explains the market", () => {
+  it("has alt text that names the brand and explains the market", () => {
+    expect(OG_ALT).toMatch(/chaos zero/i);
     expect(OG_ALT).toMatch(/cosmic signature/i);
     expect(OG_ALT).toMatch(/YES or NO/);
     expect(OG_ALT).toMatch(/gestures/i);

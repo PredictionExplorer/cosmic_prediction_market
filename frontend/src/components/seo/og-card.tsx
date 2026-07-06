@@ -12,28 +12,25 @@ import { SITE_URL } from "@/lib/site";
 export const OG_SIZE = { width: 1200, height: 630 };
 
 export const OG_ALT =
-  "Gesture Market — bet YES or NO on whether each Cosmic Signature round ends with more gestures than the last, in CST on Arbitrum One.";
+  "Chaos Zero — bet YES or NO on whether each Cosmic Signature round ends with more gestures than the last, in CST on Arbitrum One.";
 
-// Palette from globals.css.
-const SPACE = "#07060e";
-const INK = "#f0edfa";
-const INK_DIM = "#a49bc4";
-const NOVA = "#8b7bff";
-const NOVA_BRIGHT = "#a89bff";
+// Palette from globals.css (Satori cannot resolve CSS variables).
+const VOID = "#060a10";
+const INK = "#ecf5f9";
+const INK_DIM = "#99b3c1";
+const SIGNAL = "#22d3ee";
+const SIGNAL_BRIGHT = "#67e8f9";
 const HIGHER = "#34e3a5";
 const LOWER = "#ff6584";
 
-// The lucide "orbit" glyph used by the header logo and favicons.
-function OrbitGlyph({ size }: { size: number }) {
+// The slashed-zero brand mark, mirroring `layout/brand-mark.tsx`.
+function BrandGlyph({ size }: { size: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24">
-      <g fill="none" stroke={NOVA_BRIGHT} strokeWidth={2.5} strokeLinecap="round">
-        <path d="M20.341 6.484A10 10 0 0 1 10.266 21.85" />
-        <path d="M3.659 17.516A10 10 0 0 1 13.74 2.152" />
-      </g>
-      <circle cx={12} cy={12} r={3.2} fill={NOVA_BRIGHT} />
-      <circle cx={19} cy={5} r={2.4} fill={HIGHER} />
-      <circle cx={5} cy={19} r={2.4} fill={LOWER} />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <circle cx={12} cy={12} r={8} stroke={SIGNAL_BRIGHT} strokeWidth={2.5} />
+      <path d="M14.8 8.5 9.2 15.5" stroke={SIGNAL_BRIGHT} strokeWidth={2.5} strokeLinecap="round" />
+      <circle cx={18.9} cy={3.4} r={2.2} fill={HIGHER} />
+      <circle cx={5.1} cy={20.6} r={2.2} fill={LOWER} />
     </svg>
   );
 }
@@ -71,9 +68,9 @@ export async function ogCardResponse(): Promise<ImageResponse> {
           flexDirection: "column",
           justifyContent: "space-between",
           padding: 64,
-          backgroundColor: SPACE,
+          backgroundColor: VOID,
           backgroundImage:
-            `radial-gradient(720px 420px at 8% -12%, ${NOVA}3d, transparent 60%), ` +
+            `radial-gradient(720px 420px at 8% -12%, ${SIGNAL}33, transparent 60%), ` +
             `radial-gradient(560px 360px at 96% 6%, ${HIGHER}1f, transparent 60%), ` +
             `radial-gradient(640px 440px at 55% 118%, ${LOWER}1c, transparent 62%)`,
           fontFamily: "Space Grotesk",
@@ -88,14 +85,14 @@ export async function ogCardResponse(): Promise<ImageResponse> {
               width: 84,
               height: 84,
               borderRadius: 24,
-              backgroundColor: `${NOVA}26`,
+              backgroundColor: `${SIGNAL}26`,
             }}
           >
-            <OrbitGlyph size={52} />
+            <BrandGlyph size={52} />
           </div>
           <div style={{ display: "flex", fontSize: 44, color: INK }}>
-            <span>Gesture</span>
-            <span style={{ color: NOVA_BRIGHT }}>Market</span>
+            <span>Chaos</span>
+            <span style={{ color: SIGNAL_BRIGHT }}>Zero</span>
           </div>
         </div>
 
@@ -104,7 +101,7 @@ export async function ogCardResponse(): Promise<ImageResponse> {
             Bet YES or NO on every Cosmic Signature round
           </div>
           <div style={{ display: "flex", fontSize: 32, lineHeight: 1.3, color: INK_DIM, maxWidth: 980 }}>
-            Will this round end with more gestures than the last? Trustless, fully collateralized, settled in CST.
+            Will this round end with more gestures than the last? Zero oracles, zero admin keys, zero custody — settled in CST.
           </div>
         </div>
 

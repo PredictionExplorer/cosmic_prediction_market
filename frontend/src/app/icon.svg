@@ -1,21 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <style>
-    .a { stroke: #a89bff; }
-    .c { fill: #a89bff; }
+    .a { stroke: #67e8f9; }
     .h { fill: #34e3a5; }
     .l { fill: #ff6584; }
     @media (prefers-color-scheme: light) {
-      .a { stroke: #6c56e8; }
-      .c { fill: #6c56e8; }
+      .a { stroke: #0891b2; }
       .h { fill: #0ea975; }
       .l { fill: #e14b6d; }
     }
   </style>
   <g fill="none" stroke-width="2.5" stroke-linecap="round">
-    <path class="a" d="M20.341 6.484A10 10 0 0 1 10.266 21.85"/>
-    <path class="a" d="M3.659 17.516A10 10 0 0 1 13.74 2.152"/>
+    <circle class="a" cx="12" cy="12" r="8"/>
+    <path class="a" d="M14.8 8.5 9.2 15.5"/>
   </g>
-  <circle class="c" cx="12" cy="12" r="3.2"/>
-  <circle class="h" cx="19" cy="5" r="2.4"/>
-  <circle class="l" cx="5" cy="19" r="2.4"/>
+  <circle class="h" cx="18.9" cy="3.4" r="2.2"/>
+  <circle class="l" cx="5.1" cy="20.6" r="2.2"/>
 </svg>

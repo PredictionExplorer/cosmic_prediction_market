@@ -3,13 +3,13 @@ import { SITE_DESCRIPTION, SITE_TITLE, SITE_URL, absoluteUrl, parseSiteUrl } fro
 
 describe("parseSiteUrl", () => {
   it("falls back to the production domain when unset or blank", () => {
-    expect(parseSiteUrl(undefined)).toBe("https://cosmicsignature.bet");
-    expect(parseSiteUrl("")).toBe("https://cosmicsignature.bet");
-    expect(parseSiteUrl("   ")).toBe("https://cosmicsignature.bet");
+    expect(parseSiteUrl(undefined)).toBe("https://chaoszero.com");
+    expect(parseSiteUrl("")).toBe("https://chaoszero.com");
+    expect(parseSiteUrl("   ")).toBe("https://chaoszero.com");
   });
 
   it("normalizes to the origin, dropping trailing slashes and paths", () => {
-    expect(parseSiteUrl("https://cosmicsignature.bet/")).toBe("https://cosmicsignature.bet");
+    expect(parseSiteUrl("https://chaoszero.com/")).toBe("https://chaoszero.com");
     expect(parseSiteUrl("https://preview.example.com/some/path")).toBe("https://preview.example.com");
   });
 
@@ -43,8 +43,12 @@ describe("absoluteUrl", () => {
 });
 
 describe("site copy", () => {
-  it("describes the actual mechanism: YES/NO on gesture counts", () => {
+  it("leads with the brand and the game it is built on", () => {
+    expect(SITE_TITLE).toMatch(/chaos zero/i);
     expect(SITE_TITLE).toMatch(/cosmic signature/i);
+  });
+
+  it("describes the actual mechanism: YES/NO on gesture counts", () => {
     expect(SITE_DESCRIPTION).toMatch(/gestures/i);
     expect(SITE_DESCRIPTION).toMatch(/YES or NO/);
     // The market is binary; the old "scalar / HIGHER or LOWER" copy was wrong.

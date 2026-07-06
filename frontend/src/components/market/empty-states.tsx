@@ -10,17 +10,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function NoMarketConfigured() {
   return (
     <Card className="mx-auto max-w-xl p-10 text-center" data-testid="no-market">
-      <span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-nova/12 text-nova-bright">
+      <span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-signal/12 text-signal-bright">
         <Telescope className="size-7" aria-hidden />
       </span>
       <h1 className="mt-5 font-display text-2xl font-bold">No market in sight</h1>
       <p className="mt-3 text-sm leading-relaxed text-ink-dim">
         This deployment doesn&apos;t have a market configured yet. Set{" "}
-        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-nova-bright">
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-signal-bright">
           NEXT_PUBLIC_MARKET_ADDRESS
         </code>{" "}
-        to the deployed GestureSeriesMarket, or open this page with{" "}
-        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-nova-bright">
+        to the deployed market contract, or open this page with{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-signal-bright">
           ?market=0x…
         </code>{" "}
         in the URL.

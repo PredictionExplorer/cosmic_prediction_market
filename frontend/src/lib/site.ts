@@ -7,23 +7,24 @@
  * deployments emit self-consistent absolute URLs.
  */
 
-export const SITE_NAME = "Gesture Market";
+export const SITE_NAME = "Chaos Zero";
 
 /** The homepage <title> and social card headline. */
-export const SITE_TITLE = "Gesture Market — bet on Cosmic Signature gestures";
+export const SITE_TITLE = "Chaos Zero — the Cosmic Signature prediction market";
 
 /** One-line pitch for social cards and the manifest. */
 export const SITE_TAGLINE = "Bet YES or NO on every Cosmic Signature round";
 
 export const SITE_DESCRIPTION =
   "Will this Cosmic Signature round end with more gestures (bids) than the last one? " +
-  "Bet YES or NO in CST on a fully collateralized, trustless prediction market on Arbitrum One — " +
-  "one immutable contract, no oracles, no admin keys.";
+  "Bet YES or NO in CST on Chaos Zero — a fully collateralized, trustless prediction market " +
+  "on Arbitrum One with zero oracles, zero admin keys, zero custody.";
 
 export const SITE_KEYWORDS = [
-  "Cosmic Signature",
+  "Chaos Zero",
+  "chaos zero",
   "prediction market",
-  "gesture market",
+  "Cosmic Signature",
   "CST token",
   "Arbitrum One",
   "on-chain betting",
@@ -35,7 +36,7 @@ export const SITE_KEYWORDS = [
 /** The Cosmic Signature game site this market is built on. */
 export const COSMIC_SIGNATURE_URL = "https://cosmicsignature.com";
 
-const DEFAULT_SITE_URL = "https://cosmicsignature.bet";
+const DEFAULT_SITE_URL = "https://chaoszero.com";
 
 /**
  * Parses and normalizes the site origin. Absent input falls back to the
@@ -57,7 +58,7 @@ export function parseSiteUrl(raw: string | undefined): string {
   return url.origin;
 }
 
-/** The site origin, without a trailing slash (e.g. "https://cosmicsignature.bet"). */
+/** The site origin, without a trailing slash (e.g. "https://chaoszero.com"). */
 export const SITE_URL = parseSiteUrl(process.env.NEXT_PUBLIC_SITE_URL);
 
 /** Turns a site-relative path into an absolute URL for sitemaps and JSON-LD. */

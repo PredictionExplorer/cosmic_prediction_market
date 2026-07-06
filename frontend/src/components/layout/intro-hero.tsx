@@ -22,11 +22,11 @@ export function IntroHero() {
         />
         <div className="relative grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_auto]">
           <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-nova-bright">
-              Prediction market · Arbitrum One
+            <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-signal-bright">
+              Chaos Zero · Prediction market · Arbitrum One
             </p>
             <h1 id="intro-hero-title" className="mt-2 font-display text-2xl font-bold tracking-tight sm:text-3xl">
-              Bet on <span className="text-nova-bright">Cosmic Signature</span> gestures
+              Bet on <span className="text-signal-bright">Cosmic Signature</span> gestures
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-dim">
               Every round of{" "}
@@ -34,7 +34,7 @@ export function IntroHero() {
                 href={COSMIC_SIGNATURE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-medium text-nova-bright underline decoration-nova/40 underline-offset-2 transition-colors hover:text-ink"
+                className="font-medium text-signal-bright underline decoration-signal/40 underline-offset-2 transition-colors hover:text-ink"
               >
                 Cosmic Signature
               </a>{" "}
@@ -45,7 +45,7 @@ export function IntroHero() {
               </strong>
             </p>
             <p className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-ink-faint">
-              <a href="#how-it-works" className="flex items-center gap-1 font-medium text-ink-dim transition-colors hover:text-nova-bright">
+              <a href="#how-it-works" className="flex items-center gap-1 font-medium text-ink-dim transition-colors hover:text-signal-bright">
                 How it works
                 <ArrowDown className="size-3" aria-hidden />
               </a>
@@ -53,7 +53,7 @@ export function IntroHero() {
                 href={COSMIC_SIGNATURE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-medium text-ink-dim transition-colors hover:text-nova-bright"
+                className="font-medium text-ink-dim transition-colors hover:text-signal-bright"
               >
                 New to the game? Play Cosmic Signature ↗
               </a>
@@ -64,13 +64,13 @@ export function IntroHero() {
             {STEPS.map((step, i) => (
               <li
                 key={step.label}
-                className="flex items-center gap-2.5 rounded-xl border border-line bg-space/40 px-3.5 py-2"
+                className="flex items-center gap-2.5 rounded-xl border border-line bg-void/40 px-3.5 py-2"
               >
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-nova/15 font-mono text-[11px] font-semibold text-nova-bright">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-lg bg-signal/15 font-mono text-[11px] font-semibold text-signal-bright">
                   {i + 1}
                 </span>
                 <span className="flex items-center gap-1.5 text-xs font-medium text-ink-dim">
-                  <step.icon className="size-3.5 text-nova-bright" aria-hidden />
+                  <step.icon className="size-3.5 text-signal-bright" aria-hidden />
                   {step.label}
                 </span>
               </li>

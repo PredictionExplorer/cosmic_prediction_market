@@ -1,6 +1,7 @@
 /**
- * Generates the app icon set from a single source of truth (the lucide
- * "orbit" glyph used in the site header) in the Gesture Market palette:
+ * Generates the app icon set from a single source of truth (the slashed-zero
+ * mark rendered by `components/layout/brand-mark.tsx`) in the Chaos Zero
+ * palette:
  *
  *   src/app/icon.svg              transparent SVG favicon, dark/light aware
  *   src/app/favicon.ico           legacy fallback, 16/32/48 RGBA PNG entries
@@ -19,28 +20,27 @@ import sharp from "sharp";
 const appDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "app");
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 
-// Geometry of lucide "orbit" (24x24 grid), as rendered by the header logo.
-const ARC_A = "M20.341 6.484A10 10 0 0 1 10.266 21.85";
-const ARC_B = "M3.659 17.516A10 10 0 0 1 13.74 2.152";
+// Geometry of the slashed zero (24x24 grid), as rendered by the header logo:
+// a ring (the zero), a short internal slash, and the market's two sides as
+// satellites — YES green top-right, NO rose bottom-left, on the slash axis.
+const SLASH = "M14.8 8.5 9.2 15.5";
 
-// Palette from globals.css. The satellites take the market's two sides:
-// aurora green (HIGHER) top-right, nebula rose (LOWER) bottom-left.
-const DARK = { arc: "#a89bff", higher: "#34e3a5", lower: "#ff6584" };
-const LIGHT = { arc: "#6c56e8", higher: "#0ea975", lower: "#e14b6d" };
+// Palette from globals.css.
+const DARK = { arc: "#67e8f9", higher: "#34e3a5", lower: "#ff6584" };
+const LIGHT = { arc: "#0891b2", higher: "#0ea975", lower: "#e14b6d" };
 // Baked into the ICO fallback, which cannot adapt: mid tones that stay
 // legible on both light and dark tab bars.
-const UNIVERSAL = { arc: "#8b7bff", higher: "#29cf93", lower: "#f75c7e" };
+const UNIVERSAL = { arc: "#22d3ee", higher: "#29cf93", lower: "#f75c7e" };
 
-/** Orbit glyph on the 24x24 grid with explicit colors (for rasterization). */
-function glyph(colors, { stroke = 2.5, coreR = 3.2, satR = 2.4 } = {}) {
+/** Slashed-zero glyph on the 24x24 grid with explicit colors (for rasterization). */
+function glyph(colors, { stroke = 2.5, ringR = 8, satR = 2.2 } = {}) {
   return `
     <g fill="none" stroke="${colors.arc}" stroke-width="${stroke}" stroke-linecap="round">
-      <path d="${ARC_A}"/>
-      <path d="${ARC_B}"/>
+      <circle cx="12" cy="12" r="${ringR}"/>
+      <path d="${SLASH}"/>
     </g>
-    <circle cx="12" cy="12" r="${coreR}" fill="${colors.arc}"/>
-    <circle cx="19" cy="5" r="${satR}" fill="${colors.higher}"/>
-    <circle cx="5" cy="19" r="${satR}" fill="${colors.lower}"/>`;
+    <circle cx="18.9" cy="3.4" r="${satR}" fill="${colors.higher}"/>
+    <circle cx="5.1" cy="20.6" r="${satR}" fill="${colors.lower}"/>`;
 }
 
 // --- icon.svg: transparent, adapts to the browser's color scheme ----------
@@ -48,23 +48,20 @@ function glyph(colors, { stroke = 2.5, coreR = 3.2, satR = 2.4 } = {}) {
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <style>
     .a { stroke: ${DARK.arc}; }
-    .c { fill: ${DARK.arc}; }
     .h { fill: ${DARK.higher}; }
     .l { fill: ${DARK.lower}; }
     @media (prefers-color-scheme: light) {
       .a { stroke: ${LIGHT.arc}; }
-      .c { fill: ${LIGHT.arc}; }
       .h { fill: ${LIGHT.higher}; }
       .l { fill: ${LIGHT.lower}; }
     }
   </style>
   <g fill="none" stroke-width="2.5" stroke-linecap="round">
-    <path class="a" d="${ARC_A}"/>
-    <path class="a" d="${ARC_B}"/>
+    <circle class="a" cx="12" cy="12" r="8"/>
+    <path class="a" d="${SLASH}"/>
   </g>
-  <circle class="c" cx="12" cy="12" r="3.2"/>
-  <circle class="h" cx="19" cy="5" r="2.4"/>
-  <circle class="l" cx="5" cy="19" r="2.4"/>
+  <circle class="h" cx="18.9" cy="3.4" r="2.2"/>
+  <circle class="l" cx="5.1" cy="20.6" r="2.2"/>
 </svg>
 `;
 
@@ -100,23 +97,23 @@ function buildIco(entries) {
   return Buffer.concat([header, ...dirs, ...entries.map((e) => e.png)]);
 }
 
-// --- apple-icon.png: opaque deep-space tile (iOS composites black behind
+// --- apple-icon.png: opaque void tile (iOS composites black behind
 // transparency, so an explicit background is the safe choice) ---------------
 
 const appleSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
   <defs>
     <radialGradient id="glow" cx="30%" cy="16%" r="90%">
-      <stop offset="0%" stop-color="#8b7bff" stop-opacity="0.30"/>
-      <stop offset="55%" stop-color="#8b7bff" stop-opacity="0.07"/>
-      <stop offset="100%" stop-color="#8b7bff" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#22d3ee" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect width="180" height="180" fill="#0c0a18"/>
+  <rect width="180" height="180" fill="#0a1118"/>
   <rect width="180" height="180" fill="url(#glow)"/>
   <g transform="translate(90 90) scale(4.6) translate(-12 -12)">${glyph(DARK)}</g>
 </svg>`;
 
-// --- manifest icons: opaque deep-space tiles for PWA launchers ------------
+// --- manifest icons: opaque void tiles for PWA launchers ------------------
 // glyphScale is the fraction of the tile the 24px glyph grid spans; maskable
 // icons keep the glyph inside the central safe zone (~80% circle).
 
@@ -125,12 +122,12 @@ function tileSvg(size, glyphScale) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
   <defs>
     <radialGradient id="glow" cx="30%" cy="16%" r="90%">
-      <stop offset="0%" stop-color="#8b7bff" stop-opacity="0.30"/>
-      <stop offset="55%" stop-color="#8b7bff" stop-opacity="0.07"/>
-      <stop offset="100%" stop-color="#8b7bff" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#22d3ee" stop-opacity="0.07"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect width="${size}" height="${size}" fill="#0c0a18"/>
+  <rect width="${size}" height="${size}" fill="#0a1118"/>
   <rect width="${size}" height="${size}" fill="url(#glow)"/>
   <g transform="translate(${size / 2} ${size / 2}) scale(${scale}) translate(-12 -12)">${glyph(DARK)}</g>
 </svg>`;
@@ -145,7 +142,7 @@ async function main() {
   const icoEntries = await Promise.all(
     [
       // Slightly heavier strokes and larger dots at 16px for legibility.
-      { size: 16, tuning: { stroke: 3, coreR: 3.4, satR: 2.6 } },
+      { size: 16, tuning: { stroke: 3, ringR: 7.6, satR: 2.6 } },
       { size: 32, tuning: {} },
       { size: 48, tuning: {} },
     ].map(async ({ size, tuning }) => ({

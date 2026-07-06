@@ -52,7 +52,7 @@ export function ConnectButton() {
     return (
       <>
         <Button
-          variant="nova"
+          variant="signal"
           onClick={() => {
             setModalRequested(true);
             setModalOpen(true);

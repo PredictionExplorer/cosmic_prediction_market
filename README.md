@@ -1,7 +1,8 @@
-# Gesture Market
+# Chaos Zero
 
-A perpetual series of binary prediction markets on one question, asked fresh
-every [Cosmic Signature](https://cosmicsignature.com) round:
+**Chaos** is what you bet on; **zero** is what you have to trust. A perpetual
+series of binary prediction markets on one question, asked fresh every
+[Cosmic Signature](https://cosmicsignature.com) round:
 
 > **Will this round end with more gestures (bids) than the previous round?**
 

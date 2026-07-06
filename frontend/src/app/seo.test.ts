@@ -41,9 +41,9 @@ describe("sitemap.xml", () => {
 describe("manifest", () => {
   const data = manifest();
 
-  it("matches the cosmic theme", () => {
-    expect(data.theme_color).toBe("#07060e");
-    expect(data.background_color).toBe("#07060e");
+  it("matches the void theme", () => {
+    expect(data.theme_color).toBe("#060a10");
+    expect(data.background_color).toBe("#060a10");
     expect(data.display).toBe("standalone");
   });
 
@@ -66,7 +66,7 @@ describe("llms.txt", () => {
   it("exists and explains the market to AI crawlers", () => {
     expect(existsSync(path)).toBe(true);
     const text = readFileSync(path, "utf8");
-    expect(text).toMatch(/^# Gesture Market/);
+    expect(text).toMatch(/^# Chaos Zero/);
     expect(text).toMatch(/cosmic signature/i);
     expect(text).toMatch(/gestures? \(bids\)/i);
     expect(text).toMatch(/YES/);

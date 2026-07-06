@@ -51,7 +51,7 @@ export const wagmiConfig = createConfig({
   connectors: buildConnectors(),
   storage:
     typeof window !== "undefined"
-      ? createStorage({ storage: window.localStorage, key: "gesture-market" })
+      ? createStorage({ storage: window.localStorage, key: "chaos-zero" })
       : undefined,
   transports: {
     [appConfig.chain.id]: http(appConfig.rpcUrl ?? undefined),

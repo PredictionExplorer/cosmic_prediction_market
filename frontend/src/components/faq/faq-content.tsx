@@ -22,10 +22,10 @@ function CategoryLinks({ orientation }: { orientation: "rail" | "chips" }) {
               "flex items-center gap-2.5 rounded-xl border text-sm transition-colors",
               orientation === "rail"
                 ? "border-transparent px-3 py-2 text-ink-dim hover:bg-surface-2/60 hover:text-ink"
-                : "border-line bg-surface/60 px-3 py-1.5 text-xs text-ink-dim hover:border-nova/50 hover:text-nova-bright",
+                : "border-line bg-surface/60 px-3 py-1.5 text-xs text-ink-dim hover:border-signal/50 hover:text-signal-bright",
             ].join(" ")}
           >
-            <category.icon className="size-4 text-nova-bright" aria-hidden />
+            <category.icon className="size-4 text-signal-bright" aria-hidden />
             <span className="font-medium">{category.title}</span>
             {orientation === "rail" && (
               <span className="ml-auto font-mono text-[11px] text-ink-faint">{category.items.length}</span>
@@ -43,9 +43,9 @@ export function FaqContent() {
     <div data-testid="faq-content">
       {/* Hero */}
       <div className="mx-auto max-w-2xl py-10 text-center sm:py-14">
-        <p className="font-mono text-xs uppercase tracking-[0.35em] text-nova-bright">Help center</p>
+        <p className="font-mono text-xs uppercase tracking-[0.35em] text-signal-bright">Help center</p>
         <h1 className="mt-4 font-display text-4xl font-bold tracking-tight sm:text-5xl">
-          Frequently asked <span className="text-nova-bright">questions</span>
+          Frequently asked <span className="text-signal-bright">questions</span>
         </h1>
         <p className="mt-4 text-sm leading-relaxed text-ink-dim sm:text-base">
           Everything about betting on gestures — how prices form, how rounds resolve, what the risks are, and why
@@ -76,7 +76,7 @@ export function FaqContent() {
               data-testid={`faq-section-${category.id}`}
             >
               <div className="flex items-center gap-3">
-                <span className="flex size-9 items-center justify-center rounded-xl bg-nova/12 text-nova-bright">
+                <span className="flex size-9 items-center justify-center rounded-xl bg-signal/12 text-signal-bright">
                   <category.icon className="size-4.5" aria-hidden />
                 </span>
                 <div>
@@ -93,7 +93,7 @@ export function FaqContent() {
           ))}
 
           {/* Outro */}
-          <Card accent="nova" className="p-8 text-center" data-testid="faq-outro">
+          <Card accent="signal" className="p-8 text-center" data-testid="faq-outro">
             <h2 className="font-display text-xl font-semibold">Still curious?</h2>
             <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-ink-dim">
               The market is a single open contract — read it, verify it, or head back and watch the odds move live.
@@ -101,7 +101,7 @@ export function FaqContent() {
             <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
               <Link
                 href="/"
-                className="inline-flex h-10 items-center justify-center rounded-xl bg-nova px-5 text-sm font-semibold text-space shadow-glow-nova transition-all hover:bg-nova-bright"
+                className="inline-flex h-10 items-center justify-center rounded-xl bg-signal px-5 text-sm font-semibold text-void shadow-glow-signal transition-all hover:bg-signal-bright"
               >
                 Go to the market
               </Link>
@@ -109,7 +109,7 @@ export function FaqContent() {
                 href="https://cosmicsignature.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-ink-dim transition-colors hover:text-nova-bright"
+                className="text-sm text-ink-dim transition-colors hover:text-signal-bright"
               >
                 Play Cosmic Signature ↗
               </a>

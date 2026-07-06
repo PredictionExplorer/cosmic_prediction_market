@@ -24,7 +24,7 @@ const PHASE_BADGE = {
     tip: "No one has funded this round's pool yet. The first liquidity provider opens the market and picks the opening odds.",
   },
   future: {
-    tone: "nova" as const,
+    tone: "signal" as const,
     label: "Future round — open for early positions",
     pulse: false,
     tip: "The game hasn't reached this round yet, but its market is already tradable — you can take positions before the round even starts.",
@@ -48,7 +48,7 @@ const PHASE_BADGE = {
     tip: "The game round is over and the outcome is final on-chain. Once anyone sends the (permissionless) resolve transaction, winners can claim.",
   },
   resolved: {
-    tone: "nova" as const,
+    tone: "signal" as const,
     label: "Resolved",
     pulse: false,
     tip: "The outcome is written on-chain. Winning tokens pay 1 CST each and can be claimed forever — there's no deadline.",
@@ -107,7 +107,7 @@ export function MarketHero({ snapshot, history }: MarketHeroProps) {
   const badge = PHASE_BADGE[phase];
 
   return (
-    <Card accent="nova" className="p-6 sm:p-8" data-testid="market-hero">
+    <Card accent="signal" className="p-6 sm:p-8" data-testid="market-hero">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Tooltip content={badge.tip} side="bottom" align="start">
@@ -141,7 +141,7 @@ export function MarketHero({ snapshot, history }: MarketHeroProps) {
               —
             </span>
           ) : (
-            <span className={phase === "resolved" ? "text-ended" : "text-glow-nova text-ink"} data-testid="hero-probability">
+            <span className={phase === "resolved" ? "text-ended" : "text-glow-signal text-ink"} data-testid="hero-probability">
               <AnimatedNumber
                 value={probability * 100}
                 format={(v) => `${v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`}

@@ -32,7 +32,7 @@ export function AddressLink({ address, kind = "address", label, className = "" }
       target="_blank"
       rel="noopener noreferrer"
       title={`${hint} — view on explorer`}
-      className={`${baseClass} text-ink-dim hover:text-nova-bright transition-colors`}
+      className={`${baseClass} text-ink-dim hover:text-signal-bright transition-colors`}
     >
       {text}
       <ExternalLink className="size-3" aria-hidden />

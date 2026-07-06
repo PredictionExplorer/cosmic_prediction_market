@@ -71,17 +71,17 @@ export function SidePanelTabs({ lpIndicator, bet, liquidity }: SidePanelTabsProp
               onClick={() => select(tab.id)}
               className={[
                 "flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 font-display text-sm font-semibold transition-colors",
-                selected ? "bg-nova/15 text-nova-bright" : "text-ink-faint hover:text-ink",
+                selected ? "bg-signal/15 text-signal-bright" : "text-ink-faint hover:text-ink",
               ].join(" ")}
             >
               {tab.label}
               {tab.id === "liquidity" && lpIndicator && (
                 <span className="relative flex size-1.5" data-testid="lp-tab-indicator">
                   <span
-                    className="absolute inline-flex h-full w-full animate-ping rounded-full bg-nova-bright opacity-60"
+                    className="absolute inline-flex h-full w-full animate-ping rounded-full bg-signal-bright opacity-60"
                     aria-hidden
                   />
-                  <span className="relative inline-flex size-1.5 rounded-full bg-nova-bright" aria-hidden />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-signal-bright" aria-hidden />
                   <span className="sr-only">(you have a liquidity position)</span>
                 </span>
               )}

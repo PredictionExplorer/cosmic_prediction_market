@@ -1,6 +1,6 @@
-# Gesture Market — frontend
+# Chaos Zero — frontend
 
-A Next.js app for the [Gesture Market series](../README.md): one binary
+A Next.js app for the [Chaos Zero series](../README.md): one binary
 prediction market per Cosmic Signature round — *will this round end with more
 gestures than the last one?* — settled in CST on Arbitrum One.
 
@@ -24,7 +24,7 @@ animation engine) loads on demand rather than in the first-load bundle.
 ## Stack
 
 - [Next.js 16](https://nextjs.org) (App Router, Turbopack) + React 19 + TypeScript (strict)
-- [Tailwind CSS v4](https://tailwindcss.com) with a custom cosmic design system
+- [Tailwind CSS v4](https://tailwindcss.com) with a custom "void + signal" design system
 - [wagmi v3](https://wagmi.sh) + [viem](https://viem.sh) for wallets and contract I/O
   (injected wallets are auto-discovered via EIP-6963; WalletConnect optional)
 - [TanStack Query](https://tanstack.com/query) for on-chain data caching/refresh

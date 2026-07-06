@@ -234,7 +234,7 @@ export function InfoTip({ label, content, side, align, className = "", iconClass
       <button
         type="button"
         aria-label={label}
-        className="inline-flex cursor-help items-center justify-center rounded-full text-ink-faint transition-colors hover:text-nova-bright focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-nova"
+        className="inline-flex cursor-help items-center justify-center rounded-full text-ink-faint transition-colors hover:text-signal-bright focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal"
       >
         <CircleQuestionMark className={iconClassName} aria-hidden />
       </button>

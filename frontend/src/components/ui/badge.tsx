@@ -1,9 +1,9 @@
 import type { HTMLAttributes } from "react";
 
-type BadgeTone = "nova" | "higher" | "lower" | "ended" | "muted";
+type BadgeTone = "signal" | "higher" | "lower" | "ended" | "muted";
 
 const TONES: Record<BadgeTone, string> = {
-  nova: "bg-nova/15 text-nova-bright border-nova/30",
+  signal: "bg-signal/15 text-signal-bright border-signal/30",
   higher: "bg-higher/12 text-higher border-higher/30",
   lower: "bg-lower/12 text-lower border-lower/30",
   ended: "bg-ended/12 text-ended border-ended/30",

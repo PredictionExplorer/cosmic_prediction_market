@@ -2,12 +2,12 @@ import type { HTMLAttributes } from "react";
 
 type CardProps = HTMLAttributes<HTMLDivElement> & {
   /** Extra glow accent along the top edge. */
-  accent?: "none" | "nova" | "higher" | "lower" | "ended";
+  accent?: "none" | "signal" | "higher" | "lower" | "ended";
 };
 
 const ACCENTS: Record<NonNullable<CardProps["accent"]>, string> = {
   none: "",
-  nova: "before:bg-gradient-to-r before:from-transparent before:via-nova/70 before:to-transparent",
+  signal: "before:bg-gradient-to-r before:from-transparent before:via-signal/70 before:to-transparent",
   higher: "before:bg-gradient-to-r before:from-transparent before:via-higher/70 before:to-transparent",
   lower: "before:bg-gradient-to-r before:from-transparent before:via-lower/70 before:to-transparent",
   ended: "before:bg-gradient-to-r before:from-transparent before:via-ended/70 before:to-transparent",

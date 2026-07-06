@@ -162,10 +162,10 @@ export function LiquidityPanel({
   else addLabel = "Add liquidity";
 
   return (
-    <Card accent="nova" className="p-5" data-testid="liquidity-panel">
+    <Card accent="signal" className="p-5" data-testid="liquidity-panel">
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
-          <Droplets className="size-4 text-nova-bright" aria-hidden />
+          <Droplets className="size-4 text-signal-bright" aria-hidden />
           Provide liquidity
         </h2>
         <div className="flex rounded-lg border border-line p-0.5 text-xs" role="tablist" aria-label="Liquidity mode">
@@ -178,7 +178,7 @@ export function LiquidityPanel({
               onClick={() => setMode(m)}
               className={[
                 "rounded-md px-2.5 py-1 capitalize transition-colors",
-                mode === m ? "bg-nova/15 text-nova-bright" : "text-ink-faint hover:text-ink",
+                mode === m ? "bg-signal/15 text-signal-bright" : "text-ink-faint hover:text-ink",
               ].join(" ")}
             >
               {m}
@@ -196,7 +196,7 @@ export function LiquidityPanel({
             content="Every bet pays this fee to the pool's liquidity providers. It isn't fixed: each LP declares the fee they want, and the pool charges the share-weighted average of all declarations — so it drifts as LPs join, leave, or re-vote."
           />
         </span>
-        <span className="font-mono text-sm font-semibold text-nova-bright" data-testid="lp-pool-fee">
+        <span className="font-mono text-sm font-semibold text-signal-bright" data-testid="lp-pool-fee">
           {poolOpen ? formatBps(poolFee) : "—"}
         </span>
       </div>
@@ -224,7 +224,7 @@ export function LiquidityPanel({
               className="align-baseline"
             >
               <button
-                className="font-mono text-nova-bright underline-offset-2 hover:underline"
+                className="font-mono text-signal-bright underline-offset-2 hover:underline"
                 onClick={() => {
                   setShowRevote((v) => !v);
                   setRevoteBps(lpDeclaredFeeBps);
@@ -260,7 +260,7 @@ export function LiquidityPanel({
 
       {/* Re-vote without moving funds */}
       {showRevote && lpShares > 0n && (
-        <div className="mt-3 rounded-xl border border-nova/30 bg-nova/8 p-3" data-testid="lp-revote">
+        <div className="mt-3 rounded-xl border border-signal/30 bg-signal/8 p-3" data-testid="lp-revote">
           <div className="flex items-baseline justify-between text-xs">
             <span className="flex items-center gap-1.5 text-ink-dim">
               <Vote className="size-3.5" aria-hidden /> Change your fee vote
@@ -271,7 +271,7 @@ export function LiquidityPanel({
           </div>
           <input
             type="range"
-            className="cosmic-range mt-2"
+            className="chaos-range mt-2"
             min={0}
             max={1000}
             step={10}
@@ -308,7 +308,7 @@ export function LiquidityPanel({
           </p>
         ) : (
           <>
-            <div className="mt-4 rounded-xl border border-line bg-space/50 p-3 focus-within:border-nova/50">
+            <div className="mt-4 rounded-xl border border-line bg-void/50 p-3 focus-within:border-signal/50">
               <div className="flex items-center justify-between text-[11px] text-ink-faint">
                 <label htmlFor="lp-amount">Amount</label>
                 {connected && (
@@ -355,7 +355,7 @@ export function LiquidityPanel({
               </div>
               <input
                 type="range"
-                className="cosmic-range mt-2"
+                className="chaos-range mt-2"
                 min={0}
                 max={1000}
                 step={10}
@@ -387,7 +387,7 @@ export function LiquidityPanel({
                 </div>
                 <input
                   type="range"
-                  className="cosmic-range mt-2"
+                  className="chaos-range mt-2"
                   min={1}
                   max={99}
                   value={probPct}
@@ -455,7 +455,7 @@ export function LiquidityPanel({
                       content="Depositing re-votes your whole position at the fee you chose above, which shifts the pool's share-weighted average — from today's fee to the value shown here."
                     />
                   </dt>
-                  <dd className="font-mono text-nova-bright" data-testid="lp-preview-fee">
+                  <dd className="font-mono text-signal-bright" data-testid="lp-preview-fee">
                     {poolOpen ? `${formatBps(poolFee)} → ` : ""}
                     {formatBps(addPreview.feeAfter)}
                   </dd>
@@ -466,7 +466,7 @@ export function LiquidityPanel({
             <Button
               className="mt-4 w-full"
               size="lg"
-              variant="nova"
+              variant="signal"
               disabled={connected && (amount === null || insufficient || !!parsed.error || addPreview?.error != null)}
               loading={pendingAction === "approve" || pendingAction === "addLiquidity"}
               onClick={() => void submitAdd()}
@@ -501,7 +501,7 @@ export function LiquidityPanel({
                 </div>
                 <input
                   type="range"
-                  className="cosmic-range mt-3"
+                  className="chaos-range mt-3"
                   min={1}
                   max={100}
                   value={removePct}

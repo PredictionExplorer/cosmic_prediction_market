@@ -58,7 +58,7 @@ export function RoundNav({ roundId, currentRound }: RoundNavProps) {
           >
             <span
               data-testid="round-future"
-              className="flex cursor-help items-center gap-1 rounded-full border border-nova/40 bg-nova/10 px-2.5 py-0.5 text-[11px] font-semibold text-nova-bright"
+              className="flex cursor-help items-center gap-1 rounded-full border border-signal/40 bg-signal/10 px-2.5 py-0.5 text-[11px] font-semibold text-signal-bright"
             >
               <Telescope className="size-3" aria-hidden />
               Future

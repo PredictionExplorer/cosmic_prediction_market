@@ -3,7 +3,7 @@
 import type { ButtonHTMLAttributes } from "react";
 import { Loader2 } from "lucide-react";
 
-export type ButtonVariant = "nova" | "higher" | "lower" | "ghost" | "outline" | "ended";
+export type ButtonVariant = "signal" | "higher" | "lower" | "ghost" | "outline" | "ended";
 export type ButtonSize = "sm" | "md" | "lg";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -13,13 +13,13 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  nova: "bg-nova text-space font-semibold hover:bg-nova-bright shadow-glow-nova disabled:shadow-none",
+  signal: "bg-signal text-void font-semibold hover:bg-signal-bright shadow-glow-signal disabled:shadow-none",
   higher:
-    "bg-higher text-space font-semibold hover:brightness-110 shadow-glow-higher disabled:shadow-none",
-  lower: "bg-lower text-space font-semibold hover:brightness-110 shadow-glow-lower disabled:shadow-none",
-  ended: "bg-ended text-space font-semibold hover:brightness-110 disabled:shadow-none",
+    "bg-higher text-void font-semibold hover:brightness-110 shadow-glow-higher disabled:shadow-none",
+  lower: "bg-lower text-void font-semibold hover:brightness-110 shadow-glow-lower disabled:shadow-none",
+  ended: "bg-ended text-void font-semibold hover:brightness-110 disabled:shadow-none",
   ghost: "bg-transparent text-ink-dim hover:text-ink hover:bg-surface-2",
-  outline: "border border-line-strong text-ink hover:border-nova/60 hover:text-nova-bright bg-surface/40",
+  outline: "border border-line-strong text-ink hover:border-signal/60 hover:text-signal-bright bg-surface/40",
 };
 
 const SIZES: Record<ButtonSize, string> = {
@@ -29,7 +29,7 @@ const SIZES: Record<ButtonSize, string> = {
 };
 
 export function Button({
-  variant = "nova",
+  variant = "signal",
   size = "md",
   loading = false,
   disabled,
@@ -43,7 +43,7 @@ export function Button({
       disabled={disabled || loading}
       className={[
         "inline-flex items-center justify-center font-medium transition-all duration-150",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-nova",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal",
         "disabled:opacity-45 disabled:cursor-not-allowed active:enabled:scale-[0.98]",
         VARIANTS[variant],
         SIZES[size],

@@ -19,7 +19,7 @@ describe("Header", () => {
 
   it("links the brand home and navigates to Market and FAQ", () => {
     render(<Header active="market" />);
-    expect(screen.getByRole("link", { name: /gesture/i })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: /chaos/i })).toHaveAttribute("href", "/");
 
     const nav = screen.getByRole("navigation", { name: /primary/i });
     expect(screen.getByRole("link", { name: "Market" })).toHaveAttribute("href", "/");

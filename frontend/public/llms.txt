@@ -1,6 +1,8 @@
-# Gesture Market
+# Chaos Zero
 
-> Gesture Market is a fully collateralized YES/NO prediction market on the Cosmic Signature game. Every game round asks the same question: will this round end with more gestures (bids) than the previous round? Bets are placed in CST (Cosmic Signature Token) on Arbitrum One, and every winning token pays out exactly 1 CST. The whole series runs on one immutable smart contract — no owner, no admin keys, no oracles.
+> Chaos Zero is a fully collateralized YES/NO prediction market on the Cosmic Signature game. Every game round asks the same question: will this round end with more gestures (bids) than the previous round? Bets are placed in CST (Cosmic Signature Token) on Arbitrum One, and every winning token pays out exactly 1 CST. The whole series runs on one immutable smart contract — zero oracles, zero admin keys, zero custody.
+
+The name: "Chaos" is the thing being bet on — a live gesture count driven by many independent players that nobody controls; "Zero" is the trust required — zero oracles, zero admin keys, zero custody.
 
 Key facts:
 
@@ -14,8 +16,8 @@ Key facts:
 
 ## Pages
 
-- [Market](https://cosmicsignature.bet/): the live market — current YES probability, gesture count vs threshold race, place YES/NO bets, provide liquidity, resolve rounds, and claim winnings. `?round=N` shows any past or future round.
-- [FAQ](https://cosmicsignature.bet/faq): every question answered — the basics, betting mechanics, pricing and fees, liquidity provision and fee voting, resolution and claiming, and the safety model.
+- [Market](https://chaoszero.com/): the live market — current YES probability, gesture count vs threshold race, place YES/NO bets, provide liquidity, resolve rounds, and claim winnings. `?round=N` shows any past or future round.
+- [FAQ](https://chaoszero.com/faq): every question answered — the basics, betting mechanics, pricing and fees, liquidity provision and fee voting, resolution and claiming, and the safety model.
 
 ## About Cosmic Signature
 

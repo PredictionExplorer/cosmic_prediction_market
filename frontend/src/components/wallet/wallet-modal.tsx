@@ -50,7 +50,7 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
     <AnimatePresence>
       {open && (
         <m.div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-space/80 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-void/80 backdrop-blur-sm p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -86,7 +86,7 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
                 <p>
                   Install a browser wallet like{" "}
                   <a
-                    className="text-nova-bright underline-offset-2 hover:underline"
+                    className="text-signal-bright underline-offset-2 hover:underline"
                     href="https://metamask.io"
                     target="_blank"
                     rel="noopener noreferrer"
@@ -95,7 +95,7 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
                   </a>{" "}
                   or{" "}
                   <a
-                    className="text-nova-bright underline-offset-2 hover:underline"
+                    className="text-signal-bright underline-offset-2 hover:underline"
                     href="https://rabby.io"
                     target="_blank"
                     rel="noopener noreferrer"
@@ -112,14 +112,14 @@ export function WalletModal({ open, onClose }: WalletModalProps) {
                     <button
                       onClick={() => void pick(connector)}
                       disabled={connect.isPending}
-                      className="flex w-full items-center gap-3 rounded-xl border border-line bg-surface-2/50 px-4 py-3 text-left text-sm font-medium transition-all hover:border-nova/50 hover:bg-surface-2 disabled:opacity-50"
+                      className="flex w-full items-center gap-3 rounded-xl border border-line bg-surface-2/50 px-4 py-3 text-left text-sm font-medium transition-all hover:border-signal/50 hover:bg-surface-2 disabled:opacity-50"
                     >
                       {connector.icon ? (
                         // eslint-disable-next-line @next/next/no-img-element -- wallet icons are data: URIs from EIP-6963
                         <img src={connector.icon} alt="" className="size-7 rounded-md" />
                       ) : (
-                        <span className="flex size-7 items-center justify-center rounded-md bg-nova/15">
-                          <Wallet className="size-4 text-nova-bright" aria-hidden />
+                        <span className="flex size-7 items-center justify-center rounded-md bg-signal/15">
+                          <Wallet className="size-4 text-signal-bright" aria-hidden />
                         </span>
                       )}
                       {connector.name}

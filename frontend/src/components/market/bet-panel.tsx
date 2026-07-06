@@ -94,7 +94,7 @@ export function BetPanel({ pool, balance, allowance, pendingAction, onConnect, o
         <button
           aria-label="Slippage settings"
           onClick={() => setShowSettings((v) => !v)}
-          className={`rounded-lg p-1.5 transition-colors hover:bg-surface-2 ${showSettings ? "text-nova-bright" : "text-ink-faint"}`}
+          className={`rounded-lg p-1.5 transition-colors hover:bg-surface-2 ${showSettings ? "text-signal-bright" : "text-ink-faint"}`}
         >
           <Settings2 className="size-4" />
         </button>
@@ -119,7 +119,7 @@ export function BetPanel({ pool, balance, allowance, pendingAction, onConnect, o
                 onClick={() => setSlippageBps(bps)}
                 className={[
                   "rounded-lg px-2.5 py-1 font-mono text-xs transition-colors",
-                  slippageBps === bps ? "bg-nova/20 text-nova-bright" : "text-ink-faint hover:text-ink",
+                  slippageBps === bps ? "bg-signal/20 text-signal-bright" : "text-ink-faint hover:text-ink",
                 ].join(" ")}
               >
                 {(bps / 100).toLocaleString("en-US")}%
@@ -168,12 +168,12 @@ export function BetPanel({ pool, balance, allowance, pendingAction, onConnect, o
       </p>
 
       {/* Amount */}
-      <div className="mt-4 rounded-xl border border-line bg-space/50 p-3 focus-within:border-nova/50">
+      <div className="mt-4 rounded-xl border border-line bg-void/50 p-3 focus-within:border-signal/50">
         <div className="flex items-center justify-between text-[11px] text-ink-faint">
           <label htmlFor="bet-amount">Amount</label>
           {connected && (
             <button
-              className="transition-colors hover:text-nova-bright"
+              className="transition-colors hover:text-signal-bright"
               onClick={() => setInput(balance && balance > 0n ? formatUnits(balance, 18) : "")}
               data-testid="max-button"
             >
@@ -270,7 +270,7 @@ export function BetPanel({ pool, balance, allowance, pendingAction, onConnect, o
       <Button
         className="mt-4 w-full"
         size="lg"
-        variant={!connected || needsApproval ? "nova" : side === "yes" ? "higher" : "lower"}
+        variant={!connected || needsApproval ? "signal" : side === "yes" ? "higher" : "lower"}
         disabled={connected && (noLiquidity || amount === null || insufficient || !!parsed.error)}
         loading={busy}
         onClick={() => void submit()}

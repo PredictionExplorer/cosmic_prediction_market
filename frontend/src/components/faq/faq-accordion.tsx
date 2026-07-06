@@ -32,7 +32,7 @@ function FaqAccordionItem({ item }: { item: FaqItem }) {
           <ChevronDown
             className={[
               "size-4 shrink-0 text-ink-faint transition-transform duration-200",
-              open ? "rotate-180 text-nova-bright" : "",
+              open ? "rotate-180 text-signal-bright" : "",
             ].join(" ")}
             aria-hidden
           />

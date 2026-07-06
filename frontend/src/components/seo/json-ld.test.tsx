@@ -4,7 +4,7 @@ import { JsonLd } from "./json-ld";
 
 describe("JsonLd", () => {
   it("renders an application/ld+json script whose payload parses back to the input", () => {
-    const data = { "@context": "https://schema.org", "@type": "WebSite", name: "Gesture Market" };
+    const data = { "@context": "https://schema.org", "@type": "WebSite", name: "Chaos Zero" };
     const { container } = render(<JsonLd data={data} />);
 
     const script = container.querySelector('script[type="application/ld+json"]');

@@ -29,11 +29,19 @@ export const FAQ_CATEGORIES: readonly FaqCategory[] = [
     icon: Sparkles,
     items: [
       {
-        id: "what-is-gesture-market",
-        question: "What is Gesture Market?",
+        id: "what-is-chaos-zero",
+        question: "What is Chaos Zero?",
         answer: [
-          "Gesture Market is a prediction market on the Cosmic Signature game. Every game round asks the same simple question: will this round end with more gestures (bids) than the previous round? You bet YES or NO with CST tokens, and every winning token pays out exactly 1 CST when the round resolves.",
+          "Chaos Zero is a prediction market on the Cosmic Signature game. Every game round asks the same simple question: will this round end with more gestures (bids) than the previous round? You bet YES or NO with CST tokens, and every winning token pays out exactly 1 CST when the round resolves.",
           "The whole series runs on one immutable smart contract on Arbitrum One — every round, forever, with no owner and no admin keys.",
+        ],
+      },
+      {
+        id: "why-chaos-zero",
+        question: "Why is it called Chaos Zero?",
+        answer: [
+          "Chaos is the thing you bet on: a live gesture count driven by hundreds of independent players, publicly visible, impossible for anyone to script. Zero is what you have to trust to bet on it: zero oracles, zero admin keys, zero custody — resolution is just the contract comparing two public on-chain numbers.",
+          "Every round also starts the same way: from zero, racing a threshold.",
         ],
       },
       {

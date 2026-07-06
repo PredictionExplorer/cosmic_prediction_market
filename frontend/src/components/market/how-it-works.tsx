@@ -40,7 +40,7 @@ export function HowItWorks() {
         </h2>
         <Link
           href="/faq"
-          className="flex items-center gap-1 text-xs font-medium text-nova-bright transition-colors hover:text-ink"
+          className="flex items-center gap-1 text-xs font-medium text-signal-bright transition-colors hover:text-ink"
           data-testid="how-it-works-faq-link"
         >
           Read the full FAQ
@@ -51,7 +51,7 @@ export function HowItWorks() {
         {STEPS.map((step, i) => (
           <Card key={step.title} className="p-5">
             <div className="flex items-center gap-2.5">
-              <span className="flex size-8 items-center justify-center rounded-lg bg-nova/12 text-nova-bright">
+              <span className="flex size-8 items-center justify-center rounded-lg bg-signal/12 text-signal-bright">
                 <step.icon className="size-4" aria-hidden />
               </span>
               <span className="font-mono text-xs text-ink-faint">0{i + 1}</span>

@@ -11,7 +11,7 @@ import { JsonLd } from "@/components/seo/json-ld";
 
 const TITLE = "FAQ";
 const DESCRIPTION =
-  "How Gesture Market works: placing YES/NO bets on Cosmic Signature rounds, how odds and fees form, round resolution, liquidity provision, and the safety model.";
+  "How Chaos Zero works: placing YES/NO bets on Cosmic Signature rounds, how odds and fees form, round resolution, liquidity provision, and the safety model.";
 
 export const metadata: Metadata = {
   title: TITLE,
@@ -47,7 +47,7 @@ export default function FaqPage() {
         actions={
           <Link
             href="/"
-            className="inline-flex h-9 items-center justify-center rounded-xl bg-nova px-4 text-sm font-semibold text-space shadow-glow-nova transition-all hover:bg-nova-bright"
+            className="inline-flex h-9 items-center justify-center rounded-xl bg-signal px-4 text-sm font-semibold text-void shadow-glow-signal transition-all hover:bg-signal-bright"
           >
             Open the market
           </Link>

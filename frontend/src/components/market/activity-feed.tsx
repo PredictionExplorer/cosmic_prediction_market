@@ -14,11 +14,11 @@ interface ActivityFeedProps {
   maxItems?: number;
 }
 
-function iconBubble(tone: "higher" | "lower" | "nova" | "ended", child: ReactNode): ReactNode {
+function iconBubble(tone: "higher" | "lower" | "signal" | "ended", child: ReactNode): ReactNode {
   const classes = {
     higher: "bg-higher/12 text-higher",
     lower: "bg-lower/12 text-lower",
-    nova: "bg-nova/12 text-nova-bright",
+    signal: "bg-signal/12 text-signal-bright",
     ended: "bg-ended/12 text-ended",
   }[tone];
   return <span className={`flex size-7 items-center justify-center rounded-full ${classes}`}>{child}</span>;
@@ -40,7 +40,7 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
     }
     case "add":
       return {
-        icon: iconBubble("nova", <Droplets className="size-3.5" aria-hidden />),
+        icon: iconBubble("signal", <Droplets className="size-3.5" aria-hidden />),
         text: (
           <>
             added <span className="font-mono font-semibold text-ink">{formatCst(event.amount)} CST</span> of liquidity
@@ -52,16 +52,16 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
       };
     case "remove":
       return {
-        icon: iconBubble("nova", <Waves className="size-3.5" aria-hidden />),
+        icon: iconBubble("signal", <Waves className="size-3.5" aria-hidden />),
         text: <>removed liquidity from the pool</>,
       };
     case "feeVote":
       return {
-        icon: iconBubble("nova", <Vote className="size-3.5" aria-hidden />),
+        icon: iconBubble("signal", <Vote className="size-3.5" aria-hidden />),
         text: (
           <>
             re-voted the fee to{" "}
-            <span className="font-mono font-semibold text-nova-bright">
+            <span className="font-mono font-semibold text-signal-bright">
               {event.feeBps !== null ? formatBps(BigInt(event.feeBps)) : "—"}
             </span>
           </>
@@ -78,7 +78,7 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
       };
     case "mint":
       return {
-        icon: iconBubble("nova", <Layers className="size-3.5" aria-hidden />),
+        icon: iconBubble("signal", <Layers className="size-3.5" aria-hidden />),
         text: (
           <>
             minted <span className="font-mono font-semibold text-ink">{formatCst(event.amount)}</span> sets
@@ -87,7 +87,7 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
       };
     case "redeem":
       return {
-        icon: iconBubble("nova", <Undo2 className="size-3.5" aria-hidden />),
+        icon: iconBubble("signal", <Undo2 className="size-3.5" aria-hidden />),
         text: (
           <>
             redeemed <span className="font-mono font-semibold text-ink">{formatCst(event.amount)}</span> sets for CST
@@ -118,7 +118,7 @@ function describe(event: ActivityEvent): { icon: ReactNode; text: ReactNode } {
       };
     case "roundInitialized":
       return {
-        icon: iconBubble("nova", <Sparkles className="size-3.5" aria-hidden />),
+        icon: iconBubble("signal", <Sparkles className="size-3.5" aria-hidden />),
         text: <>market opened for this round</>,
       };
     case "thresholdLocked":
