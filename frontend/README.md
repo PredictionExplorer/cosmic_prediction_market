@@ -136,6 +136,8 @@ All config is env-driven and validated at startup (`src/lib/config.ts`):
 | `NEXT_PUBLIC_DEPLOY_BLOCK` | no | series deploy block — speeds up event scans |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | no | enables WalletConnect for mobile wallets |
 | `NEXT_PUBLIC_SITE_URL` | no | canonical origin for SEO metadata, sitemap and social cards (defaults to the production domain) |
+| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` | no | Google Search Console ownership token (emits the verification meta tag) |
+| `NEXT_PUBLIC_BING_SITE_VERIFICATION` | no | Bing Webmaster ownership token (`msvalidate.01` meta tag) |
 
 One deployment serves **every** round forever: the app follows the game's
 current round live, and `?round=N` links to any past round (for claims and

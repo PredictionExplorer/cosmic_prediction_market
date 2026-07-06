@@ -23,15 +23,43 @@ export function serializeJsonLd(data: JsonLd): string {
   return JSON.stringify(data).replace(/</g, "\\u003c");
 }
 
+/**
+ * Stable node ids linking the homepage's JSON-LD into one graph: the WebSite
+ * names the Organization as its publisher, so crawlers see a single publisher
+ * entity behind every page rather than disconnected blobs.
+ */
+export const ORGANIZATION_ID = `${SITE_URL}/#organization`;
+export const WEBSITE_ID = `${SITE_URL}/#website`;
+
+/** The publisher entity behind the site, with the brand mark as its logo. */
+export function organizationJsonLd(): JsonLd {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "@id": ORGANIZATION_ID,
+    name: SITE_NAME,
+    url: SITE_URL,
+    logo: {
+      "@type": "ImageObject",
+      url: absoluteUrl("/icon-512.png"),
+      width: 512,
+      height: 512,
+    },
+  };
+}
+
 /** The site itself: who we are and where we live. */
 export function webSiteJsonLd(): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
+    "@id": WEBSITE_ID,
     name: SITE_NAME,
     alternateName: "ChaosZero",
     url: SITE_URL,
     description: SITE_DESCRIPTION,
+    inLanguage: "en",
+    publisher: { "@id": ORGANIZATION_ID },
   };
 }
 
@@ -43,6 +71,9 @@ export function webApplicationJsonLd(): JsonLd {
     name: SITE_NAME,
     url: SITE_URL,
     description: SITE_DESCRIPTION,
+    inLanguage: "en",
+    image: absoluteUrl("/icon-512.png"),
+    publisher: { "@id": ORGANIZATION_ID },
     applicationCategory: "FinanceApplication",
     operatingSystem: "Any",
     browserRequirements: "Requires JavaScript. A Web3 wallet is needed to place bets.",
@@ -59,6 +90,26 @@ export function webApplicationJsonLd(): JsonLd {
   };
 }
 
+export interface BreadcrumbEntry {
+  readonly name: string;
+  /** Site-relative path ("/", "/faq", …). */
+  readonly path: string;
+}
+
+/** Positioned breadcrumb trail with absolute URLs, for sub-pages. */
+export function breadcrumbJsonLd(trail: readonly BreadcrumbEntry[]): JsonLd {
+  return {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: trail.map((entry, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      name: entry.name,
+      item: absoluteUrl(entry.path),
+    })),
+  };
+}
+
 export interface FaqEntry {
   readonly question: string;
   /** One entry per paragraph. */
@@ -71,6 +122,7 @@ export function faqPageJsonLd(items: readonly FaqEntry[]): JsonLd {
     "@context": "https://schema.org",
     "@type": "FAQPage",
     url: absoluteUrl("/faq"),
+    inLanguage: "en",
     mainEntity: items.map((item) => ({
       "@type": "Question",
       name: item.question,

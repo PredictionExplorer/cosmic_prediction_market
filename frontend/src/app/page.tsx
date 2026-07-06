@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { appConfig, COSMIC_CST_ADDRESS } from "@/lib/config";
-import { webApplicationJsonLd, webSiteJsonLd } from "@/lib/structured-data";
+import { organizationJsonLd, webApplicationJsonLd, webSiteJsonLd } from "@/lib/structured-data";
 import { Footer } from "@/components/layout/footer";
 import { Header } from "@/components/layout/header";
 import { IntroHero } from "@/components/layout/intro-hero";
@@ -31,6 +31,7 @@ export default function Home() {
         </div>
       </main>
       <Footer marketAddress={appConfig.marketAddress} cstAddress={COSMIC_CST_ADDRESS} />
+      <JsonLd data={organizationJsonLd()} />
       <JsonLd data={webSiteJsonLd()} />
       <JsonLd data={webApplicationJsonLd()} />
     </Providers>

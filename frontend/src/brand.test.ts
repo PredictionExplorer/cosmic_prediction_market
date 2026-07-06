@@ -39,11 +39,15 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-// This file spells out the forbidden patterns, so it exempts itself.
+// Exempt: this file spells out the forbidden patterns, and the redirect test
+// must name the old domain — burying it under a 308 is the one legitimate
+// place it still appears (next.config.ts itself lives outside the scanned
+// tree). llms.txt is generated from src/lib/llms.ts, which is scanned.
+const EXEMPT = new Set(["brand.test.ts", "next-config.test.ts"]);
+
 const files = [
-  ...sourceFiles(join(FRONTEND_ROOT, "src")).filter((file) => basename(file) !== "brand.test.ts"),
+  ...sourceFiles(join(FRONTEND_ROOT, "src")).filter((file) => !EXEMPT.has(basename(file))),
   ...sourceFiles(join(FRONTEND_ROOT, "scripts")),
-  join(FRONTEND_ROOT, "public", "llms.txt"),
   join(FRONTEND_ROOT, "package.json"),
   join(FRONTEND_ROOT, ".env.example"),
   join(FRONTEND_ROOT, "README.md"),

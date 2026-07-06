@@ -18,6 +18,22 @@ const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
 });
 
+/**
+ * Search-console ownership tags (Google Search Console, Bing Webmaster
+ * Tools), emitted only when the deployment provides them. Required for the
+ * post-rebrand "change of address" flow that transfers the old domain's
+ * standing to chaoszero.com.
+ */
+function verification(): Metadata["verification"] {
+  const google = process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION?.trim();
+  const bing = process.env.NEXT_PUBLIC_BING_SITE_VERIFICATION?.trim();
+  if (!google && !bing) return undefined;
+  return {
+    ...(google ? { google } : {}),
+    ...(bing ? { other: { "msvalidate.01": bing } } : {}),
+  };
+}
+
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
@@ -26,8 +42,11 @@ export const metadata: Metadata = {
   },
   description: SITE_DESCRIPTION,
   applicationName: SITE_NAME,
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
   keywords: [...SITE_KEYWORDS],
   category: "finance",
+  verification: verification(),
   alternates: {
     canonical: "/",
   },

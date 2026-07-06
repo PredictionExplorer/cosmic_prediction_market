@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { appConfig, COSMIC_CST_ADDRESS } from "@/lib/config";
 import { SITE_NAME } from "@/lib/site";
-import { faqPageJsonLd } from "@/lib/structured-data";
+import { breadcrumbJsonLd, faqPageJsonLd } from "@/lib/structured-data";
 import { FAQ_CATEGORIES } from "@/components/faq/faq-data";
 import { FaqContent } from "@/components/faq/faq-content";
 import { Footer } from "@/components/layout/footer";
@@ -58,6 +58,12 @@ export default function FaqPage() {
       </main>
       <Footer marketAddress={appConfig.marketAddress} cstAddress={COSMIC_CST_ADDRESS} />
       <JsonLd data={faqPageJsonLd(FAQ_CATEGORIES.flatMap((category) => category.items))} />
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "Home", path: "/" },
+          { name: "FAQ", path: "/faq" },
+        ])}
+      />
     </>
   );
 }

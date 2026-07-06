@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SITE_URL } from "@/lib/site";
 import manifest from "./manifest";
-import robots from "./robots";
+import robots, { AI_CRAWLERS } from "./robots";
 import sitemap from "./sitemap";
 
 const PUBLIC_DIR = join(process.cwd(), "public");
@@ -12,7 +12,22 @@ describe("robots.txt", () => {
   const data = robots();
 
   it("allows every crawler everywhere (the whole site is public)", () => {
-    expect(data.rules).toEqual([{ userAgent: "*", allow: "/" }]);
+    expect(data.rules).toContainEqual({ userAgent: "*", allow: "/" });
+  });
+
+  it("welcomes the AI crawlers by name", () => {
+    expect(data.rules).toContainEqual({ userAgent: [...AI_CRAWLERS], allow: "/" });
+    // The big three answer engines must stay on the list.
+    expect(AI_CRAWLERS).toContain("GPTBot");
+    expect(AI_CRAWLERS).toContain("ClaudeBot");
+    expect(AI_CRAWLERS).toContain("PerplexityBot");
+  });
+
+  it("never disallows anything", () => {
+    const rules = Array.isArray(data.rules) ? data.rules : [data.rules];
+    for (const rule of rules) {
+      expect(rule).not.toHaveProperty("disallow");
+    }
   });
 
   it("points crawlers at the sitemap with an absolute URL", () => {
@@ -60,17 +75,3 @@ describe("manifest", () => {
   });
 });
 
-describe("llms.txt", () => {
-  const path = join(PUBLIC_DIR, "llms.txt");
-
-  it("exists and explains the market to AI crawlers", () => {
-    expect(existsSync(path)).toBe(true);
-    const text = readFileSync(path, "utf8");
-    expect(text).toMatch(/^# Chaos Zero/);
-    expect(text).toMatch(/cosmic signature/i);
-    expect(text).toMatch(/gestures? \(bids\)/i);
-    expect(text).toMatch(/YES/);
-    expect(text).toContain(SITE_URL);
-    expect(text).toContain("https://cosmicsignature.com");
-  });
-});
